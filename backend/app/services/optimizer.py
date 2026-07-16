@@ -318,8 +318,21 @@ def _calculate_eta_for_route(
 # ---------------------------------------------------------------------------
 
 
-def _run_space_optimization(db: Client, truck_id: str, request_ids: list[str]) -> SpaceResult:
-    """Run space optimization for items on a truck."""
+def _run_space_optimization(
+    db: Client,
+    truck_id: str,
+    request_ids: list[str],
+    dropoff_seq: Optional[dict[str, int]] = None,
+    dropoff_names: Optional[dict[str, str]] = None,
+) -> SpaceResult:
+    """Run space optimization for items on a truck.
+
+    dropoff_seq maps pickup_request_id -> delivery stop rank (1 = first stop
+    reached on this route). Items whose request isn't in the map (e.g. no-geo
+    fallback requests) default to being treated as the last stop.
+    """
+    dropoff_seq = dropoff_seq or {}
+    dropoff_names = dropoff_names or {}
     truck_doc = db.collection("trucks").document(truck_id).get()
     td = truck_doc.to_dict()
     truck = TruckDimensions(
@@ -353,6 +366,8 @@ def _run_space_optimization(db: Client, truck_id: str, request_ids: list[str]) -
                 height_cm=equivalent_side,
                 stackable=d.get("stackable", False),
                 fragile=d.get("fragile", False),
+                dropoff_order=dropoff_seq.get(req_id, 9999),
+                dropoff_location_name=dropoff_names.get(req_id),
             ))
     return optimize_space(items, truck)
 
@@ -556,8 +571,22 @@ def generate_transportation_plan(db: Client, company_id: str, date_iso: str) -> 
                 # ETA calculates including Origin return
                 eta_map = _calculate_eta_for_route(route_nodes, locations, node_info, date_iso, duration_matrix)
 
+                # Rank delivery stops in visiting order so packing can be unloading-aware
+                # (cargo for the stop reached first is loaded last, near the rear door).
+                dropoff_seq: dict[str, int] = {}
+                dropoff_names: dict[str, str] = {}
+                rank = 0
+                for node in route_nodes:
+                    info = node_info.get(node)
+                    if info and info["type"] == "dropoff":
+                        rank += 1
+                        dropoff_seq[info["doc_id"]] = rank
+                        dropoff_names[info["doc_id"]] = geo_requests[info["idx"]]["destination_name"]
+
                 # Space optimization
-                space_result = _run_space_optimization(db, truck_id, list(truck_request_ids))
+                space_result = _run_space_optimization(
+                    db, truck_id, list(truck_request_ids), dropoff_seq, dropoff_names
+                )
                 logs.append(f"      Space: {space_result.weight_utilization_percent}% weight | {space_result.space_utilization_percent}% volume")
 
                 # Create route document
@@ -585,6 +614,9 @@ def generate_transportation_plan(db: Client, company_id: str, date_iso: str) -> 
                         "position_notes": loaded.position_notes,
                         "weight_kg": loaded.weight_kg,
                         "volume_m3": loaded.volume_m3,
+                        "quantity": loaded.quantity,
+                        "dropoff_order": loaded.dropoff_order,
+                        "dropoff_location_name": loaded.dropoff_location_name,
                     })
 
                 # Create route stops (now including Start and End loops to the Depot)

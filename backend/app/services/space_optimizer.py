@@ -1,11 +1,14 @@
-"""Space optimization service — volume-based bin packing.
+"""Space optimization service — unloading-aware volume-based bin packing.
 
 Calculates optimal loading arrangement for items assigned to a truck.
 Considers:
+- Delivery stop order (dropoff_order): cargo for earlier stops is loaded
+  LAST so it ends up nearest the rear door, minimizing rehandling at
+  unload time.
 - Item dimensions and weight
 - Truck interior dimensions and weight capacity
-- Stackability (stackable items can go under others)
-- Fragility (fragile items loaded last / placed on top)
+- Fragility (fragile items loaded later / placed on top within a stop group)
+- Weight (heavier items loaded earlier / lower within a stop group)
 
 Outputs loading sequence, space utilization, and weight utilization.
 
@@ -29,6 +32,11 @@ class ItemForPacking:
     height_cm: float
     stackable: bool = False
     fragile: bool = False
+    dropoff_order: int = 9999
+    """Delivery stop rank for this item's request (lower = delivered earlier).
+    Defaults to 9999 when the route/stop sequence is unknown, which sorts as
+    if delivered last — loaded deep rather than blocking known early-stop items."""
+    dropoff_location_name: Optional[str] = None
 
     @property
     def volume_m3(self) -> float:
@@ -64,6 +72,9 @@ class LoadedItem:
     position_notes: str
     weight_kg: float
     volume_m3: float
+    quantity: float = 1
+    dropoff_order: int = 9999
+    dropoff_location_name: Optional[str] = None
 
 
 @dataclass
@@ -83,14 +94,17 @@ class SpaceResult:
 
 
 def optimize_space(items: list[ItemForPacking], truck: TruckDimensions) -> SpaceResult:
-    """Calculate optimal loading arrangement for items in a truck.
+    """Calculate optimal, unloading-aware loading arrangement for items in a truck.
 
-    Loading strategy:
-    1. Non-fragile, stackable, heavy items go first (bottom layer)
-    2. Non-fragile, non-stackable items go next (middle)
-    3. Fragile items go last (top layer, loaded last = unloaded first)
-
-    Within each group, sort by weight descending (heavier items lower).
+    Loading strategy (LIFO by delivery stop):
+    1. Primary key: dropoff_order descending — items delivered at the LAST
+       stop are loaded FIRST (deepest, away from the door); items delivered
+       at the FIRST stop are loaded LAST (nearest the rear door), so they
+       come off first with no rehandling.
+    2. Within the same stop: fragile items load later (end up higher/closer
+       to the top of that stop's group) so nothing heavy sits on top of them.
+    3. Within the same stop and fragility group: heavier items load earlier
+       (end up lower), for reasonable weight distribution.
     """
     if not items:
         return SpaceResult(
@@ -101,38 +115,30 @@ def optimize_space(items: list[ItemForPacking], truck: TruckDimensions) -> Space
             remaining_volume_m3=truck.cargo_volume_m3,
         )
 
-    # Categorize items for loading order
-    bottom_layer: list[ItemForPacking] = []  # stackable, not fragile (can bear weight)
-    middle_layer: list[ItemForPacking] = []  # not stackable, not fragile
-    top_layer: list[ItemForPacking] = []     # fragile (must be on top)
+    # LIFO by delivery stop: later dropoff_order (delivered later) loads first.
+    # Fragile items load later within a stop group; heavier items load earlier.
+    loading_order = sorted(
+        items,
+        key=lambda x: (-x.dropoff_order, x.fragile, -x.weight_kg),
+    )
 
-    for item in items:
-        if item.fragile:
-            top_layer.append(item)
-        elif item.stackable:
-            bottom_layer.append(item)
-        else:
-            middle_layer.append(item)
+    # Rank stops in loading order (1 = first stop reached) for readable notes.
+    stop_ranks = sorted({item.dropoff_order for item in items})
+    total_stops = len(stop_ranks)
+    stop_rank_of = {order: i + 1 for i, order in enumerate(stop_ranks)}
 
-    # Sort each layer by weight descending (heavier first within layer)
-    bottom_layer.sort(key=lambda x: x.weight_kg, reverse=True)
-    middle_layer.sort(key=lambda x: x.weight_kg, reverse=True)
-    top_layer.sort(key=lambda x: x.weight_kg, reverse=True)
-
-    # Assign loading sequence (1 = loaded first = bottom)
-    loading_order = bottom_layer + middle_layer + top_layer
     loaded_items: list[LoadedItem] = []
     total_weight = 0.0
     total_volume = 0.0
 
     for seq, item in enumerate(loading_order, start=1):
-        # Determine position notes
+        stop_rank = stop_rank_of[item.dropoff_order]
+        is_last_stop = stop_rank == total_stops
+        stop_label = f"stop {stop_rank}" + (" (last)" if is_last_stop else "")
+        depth = "load deep" if is_last_stop else "keep near door"
+        position = f"Deliver {stop_label} — {depth}"
         if item.fragile:
-            position = "Top layer — FRAGILE, handle with care"
-        elif item.stackable and seq <= len(bottom_layer):
-            position = "Bottom layer — stackable, weight-bearing"
-        else:
-            position = "Middle layer"
+            position += ", FRAGILE handle with care"
 
         item_volume = item.volume_m3
         total_weight += item.weight_kg
@@ -146,6 +152,9 @@ def optimize_space(items: list[ItemForPacking], truck: TruckDimensions) -> Space
             position_notes=position,
             weight_kg=item.weight_kg,
             volume_m3=item_volume,
+            quantity=item.quantity,
+            dropoff_order=item.dropoff_order,
+            dropoff_location_name=item.dropoff_location_name,
         ))
 
     truck_volume = truck.cargo_volume_m3
