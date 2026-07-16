@@ -38,6 +38,7 @@ logger = logging.getLogger(__name__)
 EARTH_RADIUS_KM = 6371.0
 AVG_SPEED_KMH = 35.0
 LOADING_TIME_MINUTES = 60
+UNLOADING_TIME_MINUTES = 60
 START_HOUR = 8
 OSRM_BASE_URL = "http://router.project-osrm.org"
 OSRM_TIMEOUT_SECONDS = 10
@@ -293,6 +294,7 @@ def _calculate_eta_for_route(
             doc_id = info.get("doc_id")
             if doc_id:
                 eta_map[doc_id] = current_time
+            current_time += timedelta(minutes=UNLOADING_TIME_MINUTES)
         prev_node = node_idx
 
     return eta_map
