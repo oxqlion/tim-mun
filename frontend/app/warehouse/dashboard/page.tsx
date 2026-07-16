@@ -57,6 +57,7 @@ function DashboardContent() {
             <tr>
               <th className="px-4 py-2 font-medium">Destination</th>
               <th className="px-4 py-2 font-medium">Pickup date</th>
+              <th className="px-4 py-2 font-medium">ETA</th>
               <th className="px-4 py-2 font-medium">Status</th>
             </tr>
           </thead>
@@ -65,6 +66,16 @@ function DashboardContent() {
               <tr key={r.id} className="border-t border-black/5">
                 <td className="px-4 py-2">{r.destination_name}</td>
                 <td className="px-4 py-2">{r.pickup_date}</td>
+                <td className="px-4 py-2 text-black/60">
+                  {r.estimated_arrival
+                    ? new Date(r.estimated_arrival).toLocaleString("id-ID", {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                        day: "numeric",
+                        month: "short",
+                      })
+                    : "—"}
+                </td>
                 <td className="px-4 py-2">
                   <StatusBadge status={r.status} />
                 </td>
@@ -72,7 +83,7 @@ function DashboardContent() {
             ))}
             {requests?.length === 0 && (
               <tr>
-                <td colSpan={3} className="px-4 py-6 text-center text-black/40">
+                <td colSpan={4} className="px-4 py-6 text-center text-black/40">
                   No requests yet.
                 </td>
               </tr>

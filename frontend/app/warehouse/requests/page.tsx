@@ -37,6 +37,7 @@ function RequestsList() {
               <th className="px-4 py-2 font-medium">Destination</th>
               <th className="px-4 py-2 font-medium">Pickup date</th>
               <th className="px-4 py-2 font-medium">Items</th>
+              <th className="px-4 py-2 font-medium">ETA</th>
               <th className="px-4 py-2 font-medium">Status</th>
             </tr>
           </thead>
@@ -48,6 +49,16 @@ function RequestsList() {
                 <td className="px-4 py-2">
                   {r.items.map((it) => `${it.quantity} ${it.unit_type} ${it.commodity_name}`).join(", ")}
                 </td>
+                <td className="px-4 py-2 text-black/60">
+                  {r.estimated_arrival
+                    ? new Date(r.estimated_arrival).toLocaleString("id-ID", {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                        day: "numeric",
+                        month: "short",
+                      })
+                    : "—"}
+                </td>
                 <td className="px-4 py-2">
                   <StatusBadge status={r.status} />
                 </td>
@@ -55,7 +66,7 @@ function RequestsList() {
             ))}
             {requests?.length === 0 && (
               <tr>
-                <td colSpan={4} className="px-4 py-6 text-center text-black/40">
+                <td colSpan={5} className="px-4 py-6 text-center text-black/40">
                   No requests yet.
                 </td>
               </tr>

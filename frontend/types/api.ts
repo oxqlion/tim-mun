@@ -57,6 +57,8 @@ export interface RouteStopOut {
   pickup_request_id: string;
   stop_sequence: number;
   stop_type: "pickup" | "dropoff";
+  lat: number | null;
+  lng: number | null;
   eta: string | null;
   allocated_weight_kg: number | null;
   allocated_volume_m3: number | null;
@@ -82,6 +84,7 @@ export interface PickupRequestOut {
   destination_lng?: number;
   status: RequestStatus;
   created_at: string;
+  estimated_arrival: string | null;
   items: RequestItemOut[];
   matched_route?: RouteOut | null;
 }

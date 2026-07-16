@@ -41,5 +41,6 @@ class PickupRequestOut(BaseModel):
     destination_lng: Optional[float] = None
     status: RequestStatus
     created_at: datetime
+    estimated_arrival: Optional[datetime] = None
     items: List[RequestItemOut] = []
     matched_route: Optional[RouteOut] = None

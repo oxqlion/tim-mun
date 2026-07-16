@@ -1,11 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, lazy, Suspense } from "react";
 import RoleGuard from "@/components/RoleGuard";
 import Nav from "@/components/Nav";
 import StatusBadge from "@/components/StatusBadge";
 import { api, ApiError } from "@/lib/api";
 import type { RouteOut, StopStatus } from "@/types/api";
+
+const RouteMap = lazy(() => import("@/components/RouteMap"));
 
 const LINKS = [
   { href: "/logistics/dashboard", label: "Dashboard" },
@@ -87,15 +89,32 @@ function RoutesContent() {
               <p className="text-sm font-medium">Truck {route.truck_id}</p>
               <StatusBadge status={route.status} />
             </div>
-            <ol className="flex flex-col gap-2">
+
+            {/* Route Map */}
+            <Suspense fallback={<div className="h-64 animate-pulse rounded-md bg-zinc-100" />}>
+              <RouteMap route={route} />
+            </Suspense>
+
+            {/* Route Flow */}
+            <ol className="mt-4 flex flex-col gap-2">
               {route.stops.map((stop) => (
                 <li
                   key={stop.id}
                   className="flex items-center justify-between rounded-md bg-zinc-50 px-3 py-2 text-sm"
                 >
-                  <span>
-                    #{stop.stop_sequence} · {stop.stop_type} · request {stop.pickup_request_id}
-                    {stop.allocated_weight_kg != null && ` · ${stop.allocated_weight_kg}kg`}
+                  <span className="flex items-center gap-2">
+                    <span
+                      className={`inline-flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold text-white ${
+                        stop.stop_type === "pickup" ? "bg-blue-600" : "bg-red-600"
+                      }`}
+                    >
+                      {stop.stop_type === "pickup" ? "P" : "D"}
+                    </span>
+                    <span>
+                      #{stop.stop_sequence} · {stop.stop_type} · request {stop.pickup_request_id.slice(0, 8)}…
+                      {stop.allocated_weight_kg != null && ` · ${stop.allocated_weight_kg}kg`}
+                      {stop.eta && ` · ETA ${new Date(stop.eta).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}`}
+                    </span>
                   </span>
                   <span className="flex items-center gap-2">
                     <StatusBadge status={stop.status} />

@@ -13,6 +13,8 @@ class RouteStopOut(BaseModel):
     pickup_request_id: str
     stop_sequence: int
     stop_type: StopType
+    lat: Optional[float] = None
+    lng: Optional[float] = None
     eta: Optional[datetime] = None
     allocated_weight_kg: Optional[float] = None
     allocated_volume_m3: Optional[float] = None
