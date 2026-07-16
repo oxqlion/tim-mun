@@ -13,3 +13,6 @@ ui-debug.log
 
 # OS
 .DS_Store
+
+.claude
+backend/venv/
