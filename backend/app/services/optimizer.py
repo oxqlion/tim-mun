@@ -5,6 +5,7 @@ Solves assignment AND routing simultaneously:
 - OR-Tools decides the optimal stop order per truck
 - Naturally groups geographically close requests to same truck
 - Minimizes total distance across ALL trucks
+- Supports backhauling by tracking live vehicle capacity and closing the loop at the origin
 
 Uses OSRM for real road distances. Falls back to haversine.
 
@@ -242,12 +243,18 @@ def _solve_multi_vehicle_pdp(
     for vehicle_id in range(num_vehicles):
         route: list[int] = []
         index = routing.Start(vehicle_id)
+        
+        # Include the Start depot, all stops, and End depot
         while not routing.IsEnd(index):
             node = manager.IndexToNode(index)
-            if node != 0:
-                route.append(node)
+            route.append(node)
             index = solution.Value(routing.NextVar(index))
-        routes.append(route)
+        route.append(manager.IndexToNode(index)) # Append final depot node
+        
+        # Only process routes that have actual pickups/deliveries assigned 
+        # (len > 2 means it's not just [Depot, Depot])
+        if len(route) > 2:
+            routes.append(route)
 
     return routes
 
@@ -264,17 +271,15 @@ def _calculate_eta_for_route(
     date_iso: str,
     duration_matrix: Optional[list[list[float]]] = None,
 ) -> dict[str, datetime]:
-    """Calculate ETA at dropoff for each request."""
+    """Calculate ETA at dropoff, pickups, and return origin for each request."""
     year, month, day = map(int, date_iso.split("-"))
-    departure = datetime(year, month, day, START_HOUR, 0, 0, tzinfo=WIB)
+    current_time = datetime(year, month, day, START_HOUR, 0, 0, tzinfo=WIB)
     eta_map: dict[str, datetime] = {}
-    current_time = departure
-    prev_node = 0
-    is_first_stop = True
 
-    for node_idx in route_nodes:
-        # Skip travel time from depot to first stop (truck starts at first stop)
-        if not is_first_stop:
+    for i, node_idx in enumerate(route_nodes):
+        # Calculate travel time from previous node
+        if i > 0:
+            prev_node = route_nodes[i - 1]
             if duration_matrix is not None:
                 current_time += timedelta(seconds=duration_matrix[prev_node][node_idx])
             else:
@@ -282,20 +287,28 @@ def _calculate_eta_for_route(
                 prev_loc = locations[prev_node]
                 km = _haversine(prev_loc[0], prev_loc[1], loc[0], loc[1])
                 current_time += timedelta(hours=km / AVG_SPEED_KMH)
-        is_first_stop = False
 
         info = node_info.get(node_idx, {})
-        if info.get("type") == "pickup":
+        stop_type = info.get("type")
+
+        # Add load/unload times and log ETAs
+        if stop_type == "pickup":
             doc_id = info.get("doc_id")
             if doc_id:
                 eta_map[f"pickup_{doc_id}"] = current_time
             current_time += timedelta(minutes=LOADING_TIME_MINUTES)
-        if info.get("type") == "dropoff":
+            
+        elif stop_type == "dropoff":
             doc_id = info.get("doc_id")
             if doc_id:
                 eta_map[doc_id] = current_time
             current_time += timedelta(minutes=UNLOADING_TIME_MINUTES)
-        prev_node = node_idx
+            
+        elif stop_type == "depot":
+            if i == 0:
+                eta_map["depot_start"] = current_time
+            else:
+                eta_map["depot_end"] = current_time
 
     return eta_map
 
@@ -326,13 +339,11 @@ def _run_space_optimization(db: Client, truck_id: str, request_ids: list[str]) -
             l = d.get("length_cm") or 50
             w = d.get("width_cm") or 50
             h = d.get("height_cm") or 50
-            # Total volume = single item volume × quantity
-            # Represent as one grouped item with scaled dimensions for volume calc
-            # Use cube root scaling to keep proportional: side = cbrt(L*W*H*qty)
+            
             single_vol_cm3 = l * w * h
             total_vol_cm3 = single_vol_cm3 * qty
-            # Store as equivalent cube for volume calculation
             equivalent_side = total_vol_cm3 ** (1/3)
+            
             items.append(ItemForPacking(
                 id=item_doc.id, pickup_request_id=req_id,
                 commodity_name=f"{d.get('commodity_name', '')} (×{int(qty)})",
@@ -356,6 +367,7 @@ def generate_transportation_plan(db: Client, company_id: str, date_iso: str) -> 
 
     OR-Tools solves truck assignment + routing simultaneously,
     ensuring geographically close requests are grouped together.
+    Naturally optimizes backhauling as capacities drop on deliveries.
     """
     logs: list[str] = []
 
@@ -437,9 +449,10 @@ def generate_transportation_plan(db: Client, company_id: str, date_iso: str) -> 
     if geo_requests:
         logs.append(f"\n[2/4] Running multi-vehicle Pickup & Delivery optimization")
         logs.append(f"  All {len(geo_requests)} requests + {len(trucks)} trucks solved simultaneously")
-        logs.append(f"  OR-Tools decides: truck assignment + route order in ONE solve\n")
+        logs.append(f"  Note: Routes inherently optimize for backhauling by picking up return loads before returning to origin.\n")
 
-        # Depot at centroid
+        # Dynamic Origin/Depot: Setting to centroid of all pickups. 
+        # (Could also be swapped for a specific company warehouse lat/lng)
         avg_lat = sum(r["pickup_lat"] for r in geo_requests) / len(geo_requests)
         avg_lng = sum(r["pickup_lng"] for r in geo_requests) / len(geo_requests)
 
@@ -447,7 +460,11 @@ def generate_transportation_plan(db: Client, company_id: str, date_iso: str) -> 
         demands: list[int] = [0]
         volume_demands: list[int] = [0]
         pickups_deliveries: list[tuple[int, int]] = []
-        node_info: dict[int, dict] = {}
+        
+        # Track node metadata explicitly including the Depot
+        node_info: dict[int, dict] = {
+            0: {"type": "depot", "doc_id": "depot", "idx": -1}
+        }
 
         for i, req in enumerate(geo_requests):
             pickup_idx = len(locations)
@@ -490,18 +507,15 @@ def generate_transportation_plan(db: Client, company_id: str, date_iso: str) -> 
             logs.append(f"\n  Route assignments:")
 
             for vehicle_idx, route_nodes in enumerate(solution):
-                if not route_nodes:
-                    continue
-
                 truck_doc = trucks[vehicle_idx]
                 truck_id = truck_doc.id
                 truck_data = truck_doc.to_dict()
 
-                # Identify which requests are on this truck
+                # Identify which requests are on this truck (ignore depot)
                 truck_request_ids = set()
                 for node in route_nodes:
                     info = node_info.get(node)
-                    if info:
+                    if info and info["type"] in ["pickup", "dropoff"]:
                         truck_request_ids.add(info["doc_id"])
 
                 truck_reqs = [r for r in geo_requests if r["doc_id"] in truck_request_ids]
@@ -514,24 +528,32 @@ def generate_transportation_plan(db: Client, company_id: str, date_iso: str) -> 
                 for r in truck_reqs:
                     logs.append(f"        - {r['warehouse_name']} → {r['destination_name']}")
 
-                # Calculate route distance
+                # Calculate full round-trip route distance
                 route_dist_m = 0
-                prev = 0
-                for node in route_nodes:
-                    route_dist_m += distance_matrix[prev][node]
-                    prev = node
+                for idx in range(1, len(route_nodes)):
+                    prev = route_nodes[idx - 1]
+                    curr = route_nodes[idx]
+                    route_dist_m += distance_matrix[prev][curr]
                 route_dist_km = route_dist_m / 1000
                 total_distance_km += route_dist_km
 
-                # Log route
-                seq_str = " → ".join(
-                    f"{'P' if node_info[n]['type'] == 'pickup' else 'D'}{node_info[n]['idx']+1}"
-                    for n in route_nodes if n in node_info
-                )
+                # Generate logical sequence string
+                seq_list = []
+                for n in route_nodes:
+                    if n in node_info:
+                        t = node_info[n]["type"]
+                        if t == "depot":
+                            seq_list.append("Origin")
+                        elif t == "pickup":
+                            seq_list.append(f"P{node_info[n]['idx']+1}")
+                        else:
+                            seq_list.append(f"D{node_info[n]['idx']+1}")
+                seq_str = " → ".join(seq_list)
+                
                 logs.append(f"      Route: {seq_str}")
-                logs.append(f"      Distance: {route_dist_km:.2f} km")
+                logs.append(f"      Distance (Round-Trip): {route_dist_km:.2f} km")
 
-                # ETA
+                # ETA calculates including Origin return
                 eta_map = _calculate_eta_for_route(route_nodes, locations, node_info, date_iso, duration_matrix)
 
                 # Space optimization
@@ -565,25 +587,41 @@ def generate_transportation_plan(db: Client, company_id: str, date_iso: str) -> 
                         "volume_m3": loaded.volume_m3,
                     })
 
-                # Create route stops
+                # Create route stops (now including Start and End loops to the Depot)
                 seq = 1
                 for node_idx in route_nodes:
                     info = node_info.get(node_idx)
                     if not info:
                         continue
-                    req = geo_requests[info["idx"]]
-                    db.collection("route_stops").document().set({
-                        "route_id": route_ref.id,
-                        "pickup_request_id": req["doc_id"],
-                        "stop_sequence": seq,
-                        "stop_type": info["type"],
-                        "lat": locations[node_idx][0],
-                        "lng": locations[node_idx][1],
-                        "eta": eta_map.get(req["doc_id"]) if info["type"] == "dropoff" else eta_map.get(f"pickup_{req['doc_id']}"),
-                        "allocated_weight_kg": req["weight"],
-                        "allocated_volume_m3": None,
-                        "status": "pending",
-                    })
+                        
+                    if info["type"] == "depot":
+                        stop_type = "return_to_origin" if seq > 1 else "start_at_origin"
+                        db.collection("route_stops").document().set({
+                            "route_id": route_ref.id,
+                            "pickup_request_id": None,
+                            "stop_sequence": seq,
+                            "stop_type": stop_type,
+                            "lat": locations[node_idx][0],
+                            "lng": locations[node_idx][1],
+                            "eta": eta_map.get("depot_end") if seq > 1 else eta_map.get("depot_start"),
+                            "allocated_weight_kg": 0,
+                            "allocated_volume_m3": 0,
+                            "status": "pending",
+                        })
+                    else:
+                        req = geo_requests[info["idx"]]
+                        db.collection("route_stops").document().set({
+                            "route_id": route_ref.id,
+                            "pickup_request_id": req["doc_id"],
+                            "stop_sequence": seq,
+                            "stop_type": info["type"],
+                            "lat": locations[node_idx][0],
+                            "lng": locations[node_idx][1],
+                            "eta": eta_map.get(req["doc_id"]) if info["type"] == "dropoff" else eta_map.get(f"pickup_{req['doc_id']}"),
+                            "allocated_weight_kg": req["weight"],
+                            "allocated_volume_m3": req.get("volume"),
+                            "status": "pending",
+                        })
                     seq += 1
 
                 # Update request statuses
@@ -602,7 +640,6 @@ def generate_transportation_plan(db: Client, company_id: str, date_iso: str) -> 
     # --- Fallback for no-geo requests ---
     if no_geo_requests:
         logs.append(f"\n  Fallback: {len(no_geo_requests)} requests without coordinates")
-        # Simple assignment to remaining trucks
         remaining_trucks = [t for t in trucks if t.id not in truck_assignments]
         if remaining_trucks:
             truck_doc = remaining_trucks[0]
@@ -647,7 +684,7 @@ def generate_transportation_plan(db: Client, company_id: str, date_iso: str) -> 
 
     logs.append(f"\n[3/4] Fuel & efficiency analysis")
     logs.append(f"  → Naive distance (each request sent individually): {naive_distance:.2f} km")
-    logs.append(f"  → Optimized distance (multi-vehicle PDP): {total_distance_km:.2f} km")
+    logs.append(f"  → Optimized distance (multi-vehicle PDP with return trips): {total_distance_km:.2f} km")
     logs.append(f"  → Distance saved: {naive_distance - total_distance_km:.2f} km ({fuel_savings:.1f}%)")
     logs.append(f"  → Estimated fuel: {estimated_fuel:.2f} L")
 
@@ -660,7 +697,7 @@ def generate_transportation_plan(db: Client, company_id: str, date_iso: str) -> 
     if fuel_savings > 0:
         logs.append(f"  → Fuel savings: {fuel_savings:.1f}% vs individual delivery")
     else:
-        logs.append(f"  → Note: optimized route is {abs(fuel_savings):.1f}% longer (overhead from multi-stop grouping)")
+        logs.append(f"  → Note: optimized route is {abs(fuel_savings):.1f}% longer (overhead from return trips and multi-stop grouping)")
 
     # Update plan
     plan_ref.update({

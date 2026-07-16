@@ -20,6 +20,21 @@ function todayIso() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function getStopVisuals(type: string) {
+  switch (type) {
+    case "start_at_origin": 
+      return { color: "bg-emerald-600", label: "🏁 Start" };
+    case "return_to_origin": 
+      return { color: "bg-slate-700", label: "🏠 Return" };
+    case "pickup": 
+      return { color: "bg-blue-600", label: "📦 Pickup" };
+    case "dropoff": 
+      return { color: "bg-red-500", label: "📍 Dropoff" };
+    default: 
+      return { color: "bg-gray-500", label: "🔘 Stop" };
+  }
+}
+
 function PlansContent() {
   const [date, setDate] = useState(todayIso());
   const [plan, setPlan] = useState<TransportationPlanOut | null>(null);
@@ -244,33 +259,37 @@ function PlansContent() {
                 <div>
                   <p className="mb-2 text-sm font-medium">Route Sequence</p>
                   <div className="space-y-2">
-                    {route.stops.map((stop) => (
-                      <div
-                        key={stop.id}
-                        className="flex items-center justify-between rounded-md border px-3 py-2"
-                      >
-                        <div className="flex items-center gap-3">
-                          <span
-                            className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold text-white ${
-                              stop.stop_type === "pickup" ? "bg-blue-600" : "bg-red-500"
-                            }`}
-                          >
-                            {stop.stop_sequence}
-                          </span>
-                          <div>
-                            <p className="text-sm font-medium">
-                              {stop.stop_type === "pickup" ? "📦 Pickup" : "📍 Dropoff"}
-                              {stop.location_name && ` — ${stop.location_name}`}
-                            </p>
-                            <p className="text-xs text-muted-foreground">
-                              {stop.allocated_weight_kg && `${stop.allocated_weight_kg} kg`}
-                              {stop.eta && ` · ETA ${formatEtaWIB(stop.eta)}`}
-                            </p>
+                    {route.stops.map((stop) => {
+                      const visuals = getStopVisuals(stop.stop_type);
+                      const showWeight = stop.allocated_weight_kg && stop.allocated_weight_kg > 0;
+
+                      return (
+                        <div
+                          key={stop.id}
+                          className="flex items-center justify-between rounded-md border px-3 py-2"
+                        >
+                          <div className="flex items-center gap-3">
+                            <span
+                              className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold text-white ${visuals.color}`}
+                            >
+                              {stop.stop_sequence}
+                            </span>
+                            <div>
+                              <p className="text-sm font-medium">
+                                {visuals.label}
+                                {stop.location_name && ` — ${stop.location_name}`}
+                              </p>
+                              <p className="text-xs text-muted-foreground">
+                                {showWeight ? `${stop.allocated_weight_kg} kg` : ""}
+                                {showWeight && stop.eta ? ` · ` : ""}
+                                {stop.eta && `ETA ${formatEtaWIB(stop.eta)}`}
+                              </p>
+                            </div>
                           </div>
+                          <Badge variant="outline" className="text-xs">{stop.status}</Badge>
                         </div>
-                        <Badge variant="outline" className="text-xs">{stop.status}</Badge>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
 

@@ -26,6 +26,21 @@ function todayIso() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function getStopVisuals(type: string) {
+  switch (type) {
+    case "start_at_origin": 
+      return { color: "bg-emerald-600", label: "🏁 Start" };
+    case "return_to_origin": 
+      return { color: "bg-slate-700", label: "🏠 Return" };
+    case "pickup": 
+      return { color: "bg-blue-600", label: "📦 Pickup" };
+    case "dropoff": 
+      return { color: "bg-red-500", label: "📍 Dropoff" };
+    default: 
+      return { color: "bg-gray-500", label: "🔘 Stop" };
+  }
+}
+
 function RoutesContent() {
   const [date, setDate] = useState(todayIso());
   const [routes, setRoutes] = useState<RouteOut[] | null>(null);
@@ -96,38 +111,45 @@ function RoutesContent() {
             </Suspense>
 
             <div className="space-y-2">
-              {route.stops.map((stop) => (
-                <div key={stop.id} className="flex items-center justify-between rounded-md border px-3 py-2">
-                  <div className="flex items-center gap-3">
-                    <span className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold text-white ${stop.stop_type === "pickup" ? "bg-blue-600" : "bg-red-500"}`}>
-                      {stop.stop_sequence}
-                    </span>
-                    <div>
-                      <p className="text-sm font-medium">
-                        {stop.stop_type === "pickup" ? "📦 Pickup" : "📍 Dropoff"}
-                        {stop.location_name && ` — ${stop.location_name}`}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        {stop.allocated_weight_kg && `${stop.allocated_weight_kg} kg`}
-                        {stop.eta && ` · ETA ${formatEtaWIB(stop.eta)}`}
-                      </p>
+              {route.stops.map((stop) => {
+                const visuals = getStopVisuals(stop.stop_type);
+                // Hide 0kg rendering for origin stops to prevent clutter
+                const showWeight = stop.allocated_weight_kg && stop.allocated_weight_kg > 0;
+
+                return (
+                  <div key={stop.id} className="flex items-center justify-between rounded-md border px-3 py-2">
+                    <div className="flex items-center gap-3">
+                      <span className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold text-white ${visuals.color}`}>
+                        {stop.stop_sequence}
+                      </span>
+                      <div>
+                        <p className="text-sm font-medium">
+                          {visuals.label}
+                          {stop.location_name && ` — ${stop.location_name}`}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {showWeight ? `${stop.allocated_weight_kg} kg` : ""}
+                          {showWeight && stop.eta ? ` · ` : ""}
+                          {stop.eta && `ETA ${formatEtaWIB(stop.eta)}`}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Badge variant="outline">{stop.status}</Badge>
+                      {stop.status !== "completed" && (
+                        <Select value={stop.status} onValueChange={(v) => handleStopUpdate(stop.id, v as StopStatus)}>
+                          <SelectTrigger className="h-7 w-28 text-xs"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="pending">pending</SelectItem>
+                            <SelectItem value="in_progress">in progress</SelectItem>
+                            <SelectItem value="completed">completed</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      )}
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <Badge variant="outline">{stop.status}</Badge>
-                    {stop.status !== "completed" && (
-                      <Select value={stop.status} onValueChange={(v) => handleStopUpdate(stop.id, v as StopStatus)}>
-                        <SelectTrigger className="h-7 w-28 text-xs"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="pending">pending</SelectItem>
-                          <SelectItem value="in_progress">in progress</SelectItem>
-                          <SelectItem value="completed">completed</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    )}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </CardContent>
         </Card>

@@ -4,15 +4,16 @@ from typing import List, Literal, Optional
 from pydantic import BaseModel
 
 RouteStatus = Literal["planned", "in_progress", "completed"]
-StopType = Literal["pickup", "dropoff"]
+# StopType = Literal["pickup", "dropoff"]
+StopType = Literal["pickup", "dropoff", "start_at_origin", "return_to_origin"]
 
 
 class RouteStopOut(BaseModel):
     id: str
     route_id: str
-    pickup_request_id: str
+    pickup_request_id: Optional[str] = None
     stop_sequence: int
-    stop_type: StopType
+    stop_type: Literal["pickup", "dropoff", "start_at_origin", "return_to_origin"]
     lat: Optional[float] = None
     lng: Optional[float] = None
     eta: Optional[datetime] = None
@@ -20,6 +21,12 @@ class RouteStopOut(BaseModel):
     allocated_volume_m3: Optional[float] = None
     status: Literal["pending", "in_progress", "completed"] = "pending"
     location_name: Optional[str] = None  # warehouse name for pickup, destination for dropoff
+    lng: Optional[float] = None
+    location_name: Optional[str] = None
+    eta: Optional[datetime] = None
+    allocated_weight_kg: Optional[float] = None
+    allocated_volume_m3: Optional[float] = None
+    status: str
 
 
 class SpaceAllocationOut(BaseModel):
