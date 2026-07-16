@@ -22,6 +22,17 @@ def _stops_for_route(db, route_id: str) -> list[RouteStopOut]:
     for doc in docs:
         data = doc.to_dict()
         data["id"] = doc.id
+        # Resolve location name from pickup request
+        req_id = data.get("pickup_request_id")
+        if req_id:
+            req_doc = db.collection("pickup_requests").document(req_id).get()
+            if req_doc.exists:
+                req_data = req_doc.to_dict()
+                if data.get("stop_type") == "pickup":
+                    wh_doc = db.collection("warehouses").document(req_data.get("warehouse_id", "")).get()
+                    data["location_name"] = wh_doc.to_dict().get("name") if wh_doc.exists else None
+                else:
+                    data["location_name"] = req_data.get("destination_name")
         stops.append(RouteStopOut(**data))
     stops.sort(key=lambda s: s.stop_sequence)
     return stops
@@ -46,6 +57,12 @@ def _routes_for_plan(db, plan_id: str) -> list[RouteOut]:
         data["id"] = doc.id
         data["stops"] = _stops_for_route(db, doc.id)
         data["space_allocations"] = _space_allocations_for_route(db, doc.id)
+        # Resolve truck info
+        truck_doc = db.collection("trucks").document(data["truck_id"]).get()
+        if truck_doc.exists:
+            td = truck_doc.to_dict()
+            data["truck_plate_number"] = td.get("plate_number")
+            data["truck_vehicle_type"] = td.get("vehicle_type")
         routes.append(RouteOut(**data))
     return routes
 

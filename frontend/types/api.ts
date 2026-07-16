@@ -49,7 +49,7 @@ export interface RequestItemOut extends RequestItemIn {
 
 export interface PickupRequestCreate {
   pickup_date: string;
-  required_arrival_date?: string;
+  required_arrival_date: string;
   destination_name: string;
   destination_lat?: number;
   destination_lng?: number;
@@ -69,6 +69,7 @@ export interface RouteStopOut {
   allocated_weight_kg: number | null;
   allocated_volume_m3: number | null;
   status: StopStatus;
+  location_name: string | null;
 }
 
 export interface SpaceAllocationOut {
@@ -87,6 +88,8 @@ export interface RouteOut {
   id: string;
   transportation_plan_id: string | null;
   truck_id: string;
+  truck_plate_number: string | null;
+  truck_vehicle_type: string | null;
   route_date: string;
   status: RouteStatus;
   total_distance_km: number | null;
@@ -100,8 +103,10 @@ export interface RouteOut {
 export interface PickupRequestOut {
   id: string;
   warehouse_id: string;
+  warehouse_name: string | null;
+  warehouse_address: string | null;
   pickup_date: string;
-  required_arrival_date: string | null;
+  required_arrival_date: string;
   destination_name: string;
   destination_lat?: number;
   destination_lng?: number;
@@ -148,6 +153,7 @@ export interface TransportationPlanOut {
   fuel_savings_percent: number | null;
   created_at: string;
   approved_at: string | null;
+  optimization_log: string[];
   routes: RouteOut[];
 }
 

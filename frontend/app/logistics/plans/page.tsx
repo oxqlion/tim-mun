@@ -161,13 +161,30 @@ function PlansContent() {
             </CardContent>
           </Card>
 
+          {/* Optimization Log */}
+          {plan.optimization_log && plan.optimization_log.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Optimization Log</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <pre className="max-h-80 overflow-y-auto rounded-md bg-muted p-4 font-mono text-xs leading-relaxed">
+                  {plan.optimization_log.join("\n")}
+                </pre>
+              </CardContent>
+            </Card>
+          )}
+
           {/* Routes */}
           {plan.routes.map((route) => (
             <Card key={route.id}>
               <CardHeader className="flex flex-row items-center justify-between">
                 <div>
-                  <CardTitle className="text-sm">Truck {route.truck_id.slice(0, 8)}…</CardTitle>
+                  <CardTitle className="text-sm">
+                    {route.truck_plate_number ?? `Truck ${route.truck_id.slice(0, 8)}…`}
+                  </CardTitle>
                   <p className="text-xs text-muted-foreground">
+                    {route.truck_vehicle_type && `${route.truck_vehicle_type.replace("_", " ")} · `}
                     {route.stops.length} stops
                     {route.total_distance_km && ` · ${route.total_distance_km} km`}
                   </p>
@@ -232,11 +249,12 @@ function PlansContent() {
                               stop.stop_type === "pickup" ? "bg-blue-600" : "bg-red-500"
                             }`}
                           >
-                            {stop.stop_type === "pickup" ? "P" : "D"}
+                            {stop.stop_sequence}
                           </span>
                           <div>
                             <p className="text-sm font-medium">
-                              #{stop.stop_sequence} · {stop.stop_type}
+                              {stop.stop_type === "pickup" ? "📦 Pickup" : "📍 Dropoff"}
+                              {stop.location_name && ` — ${stop.location_name}`}
                             </p>
                             <p className="text-xs text-muted-foreground">
                               {stop.allocated_weight_kg && `${stop.allocated_weight_kg} kg`}

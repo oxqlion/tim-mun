@@ -28,7 +28,7 @@ class RequestItemOut(RequestItemIn):
 
 class PickupRequestCreate(BaseModel):
     pickup_date: date
-    required_arrival_date: Optional[date] = None
+    required_arrival_date: date
     destination_name: str
     destination_lat: Optional[float] = None
     destination_lng: Optional[float] = None
@@ -39,6 +39,8 @@ class PickupRequestCreate(BaseModel):
 class PickupRequestOut(BaseModel):
     id: str
     warehouse_id: str
+    warehouse_name: Optional[str] = None
+    warehouse_address: Optional[str] = None
     pickup_date: date
     required_arrival_date: Optional[date] = None
     destination_name: str

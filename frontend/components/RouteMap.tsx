@@ -69,23 +69,23 @@ export default function RouteMap({ route }: RouteMapProps) {
           html: `<div style="
             background: ${color};
             color: white;
-            width: 28px;
-            height: 28px;
+            width: 32px;
+            height: 32px;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 12px;
+            font-size: 11px;
             font-weight: bold;
             border: 2px solid white;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.3);
-          ">${label}${stop.stop_sequence}</div>`,
-          iconSize: [28, 28],
-          iconAnchor: [14, 14],
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+          ">${stop.stop_sequence}</div>`,
+          iconSize: [32, 32],
+          iconAnchor: [16, 16],
         });
 
         const popupContent = `
-          <strong>#${stop.stop_sequence} ${isPickup ? "Pickup" : "Dropoff"}</strong><br/>
+          <strong>#${stop.stop_sequence} ${isPickup ? "📦 Pickup" : "📍 Dropoff"}</strong><br/>
           ${stop.allocated_weight_kg ? `Weight: ${stop.allocated_weight_kg} kg` : ""}
           ${stop.eta ? `<br/>ETA: ${new Date(stop.eta).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}` : ""}
         `;

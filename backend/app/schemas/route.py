@@ -19,6 +19,7 @@ class RouteStopOut(BaseModel):
     allocated_weight_kg: Optional[float] = None
     allocated_volume_m3: Optional[float] = None
     status: Literal["pending", "in_progress", "completed"] = "pending"
+    location_name: Optional[str] = None  # warehouse name for pickup, destination for dropoff
 
 
 class SpaceAllocationOut(BaseModel):
@@ -37,6 +38,8 @@ class RouteOut(BaseModel):
     id: str
     transportation_plan_id: Optional[str] = None
     truck_id: str
+    truck_plate_number: Optional[str] = None
+    truck_vehicle_type: Optional[str] = None
     route_date: date
     status: RouteStatus
     total_distance_km: Optional[float] = None

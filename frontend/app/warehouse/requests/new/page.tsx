@@ -47,7 +47,7 @@ function NewRequestForm() {
     try {
       const payload: PickupRequestCreate = {
         pickup_date: pickupDate,
-        required_arrival_date: requiredArrivalDate || undefined,
+        required_arrival_date: requiredArrivalDate,
         destination_name: destinationName,
         destination_lat: destinationLat ? Number(destinationLat) : undefined,
         destination_lng: destinationLng ? Number(destinationLng) : undefined,
@@ -76,8 +76,8 @@ function NewRequestForm() {
             <Input required type="date" value={pickupDate} onChange={(e) => setPickupDate(e.target.value)} />
           </div>
           <div className="space-y-2">
-            <Label>Must arrive by</Label>
-            <Input type="date" value={requiredArrivalDate} onChange={(e) => setRequiredArrivalDate(e.target.value)} />
+            <Label>Must arrive by *</Label>
+            <Input required type="date" value={requiredArrivalDate} onChange={(e) => setRequiredArrivalDate(e.target.value)} />
           </div>
           <div className="space-y-2 sm:col-span-2">
             <Label>Delivery destination *</Label>

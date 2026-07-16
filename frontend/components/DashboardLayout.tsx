@@ -13,6 +13,7 @@ import {
   Package,
   LogOut,
   Leaf,
+  Inbox,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -37,6 +38,7 @@ export const warehouseNav: NavItem[] = [
 
 export const logisticsNav: NavItem[] = [
   { href: "/logistics/dashboard", label: "Dashboard", icon: <LayoutDashboard className="h-4 w-4" /> },
+  { href: "/logistics/requests", label: "Requests", icon: <Inbox className="h-4 w-4" /> },
   { href: "/logistics/plans", label: "Plans", icon: <ClipboardList className="h-4 w-4" /> },
   { href: "/logistics/routes", label: "Routes", icon: <Route className="h-4 w-4" /> },
   { href: "/logistics/trucks", label: "Fleet", icon: <Truck className="h-4 w-4" /> },

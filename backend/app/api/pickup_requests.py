@@ -51,6 +51,16 @@ def _to_out(db: Client, doc, include_route: bool = False) -> PickupRequestOut:
     data = doc.to_dict()
     data["id"] = doc.id
     data["items"] = _items_for_request(db, doc.id)
+
+    # Resolve warehouse name/address
+    wh_id = data.get("warehouse_id")
+    if wh_id:
+        wh_doc = db.collection("warehouses").document(wh_id).get()
+        if wh_doc.exists:
+            wh = wh_doc.to_dict()
+            data["warehouse_name"] = wh.get("name")
+            data["warehouse_address"] = wh.get("address")
+
     if include_route:
         data["matched_route"] = _matched_route_for_request(db, doc.id)
     return PickupRequestOut(**data)

@@ -26,6 +26,7 @@ class TransportationPlanOut(BaseModel):
     fuel_savings_percent: Optional[float] = None
     created_at: datetime
     approved_at: Optional[datetime] = None
+    optimization_log: list[str] = []
     routes: List[RouteOut] = []
 
 
