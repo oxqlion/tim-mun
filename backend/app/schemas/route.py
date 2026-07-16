@@ -21,14 +21,30 @@ class RouteStopOut(BaseModel):
     status: Literal["pending", "in_progress", "completed"] = "pending"
 
 
+class SpaceAllocationOut(BaseModel):
+    id: str
+    route_id: str
+    pickup_request_id: str
+    item_id: str
+    commodity_name: str = ""
+    loading_sequence: int
+    position_notes: Optional[str] = None
+    weight_kg: float
+    volume_m3: float
+
+
 class RouteOut(BaseModel):
     id: str
+    transportation_plan_id: Optional[str] = None
     truck_id: str
     route_date: date
     status: RouteStatus
     total_distance_km: Optional[float] = None
+    space_utilization_percent: Optional[float] = None
+    weight_utilization_percent: Optional[float] = None
     generated_at: datetime
     stops: List[RouteStopOut] = []
+    space_allocations: List[SpaceAllocationOut] = []
 
 
 class GenerateRoutesRequest(BaseModel):

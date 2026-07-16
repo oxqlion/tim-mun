@@ -2,18 +2,24 @@
 
 import { useCallback, useEffect, useState, lazy, Suspense } from "react";
 import RoleGuard from "@/components/RoleGuard";
-import Nav from "@/components/Nav";
-import StatusBadge from "@/components/StatusBadge";
+import DashboardLayout, { logisticsNav } from "@/components/DashboardLayout";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { api, ApiError } from "@/lib/api";
+import { Loader2 } from "lucide-react";
 import type { RouteOut, StopStatus } from "@/types/api";
 
 const RouteMap = lazy(() => import("@/components/RouteMap"));
-
-const LINKS = [
-  { href: "/logistics/dashboard", label: "Dashboard" },
-  { href: "/logistics/routes", label: "Routes" },
-  { href: "/logistics/trucks", label: "Trucks" },
-];
 
 function todayIso() {
   return new Date().toISOString().slice(0, 10);
@@ -26,10 +32,7 @@ function RoutesContent() {
   const [generating, setGenerating] = useState(false);
 
   const load = useCallback((d: string) => {
-    api
-      .get<RouteOut[]>(`/routes?date=${d}`)
-      .then(setRoutes)
-      .catch(() => setError("Failed to load routes"));
+    api.get<RouteOut[]>(`/routes?date=${d}`).then(setRoutes).catch(() => setError("Failed to load routes"));
   }, []);
 
   useEffect(() => load(date), [date, load]);
@@ -57,90 +60,73 @@ function RoutesContent() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-4xl px-6 py-8">
-      <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
-        <h1 className="text-lg font-semibold">Routes</h1>
-        <div className="flex items-end gap-3">
-          <label className="flex flex-col gap-1 text-sm">
-            Date
-            <input
-              type="date"
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-              className="rounded-md border border-black/15 px-3 py-1.5"
-            />
-          </label>
-          <button
-            onClick={handleGenerate}
-            disabled={generating}
-            className="rounded-md bg-black px-4 py-2 text-sm text-white disabled:opacity-50"
-          >
-            {generating ? "Generating…" : "Generate routes"}
-          </button>
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div className="space-y-1">
+          <Label>Date</Label>
+          <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-44" />
         </div>
+        <Button onClick={handleGenerate} disabled={generating}>
+          {generating && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+          {generating ? "Generating…" : "Generate Routes"}
+        </Button>
       </div>
 
-      {error && <p className="mb-4 text-sm text-red-600">{error}</p>}
+      {error && <p className="text-sm text-destructive">{error}</p>}
 
-      <div className="flex flex-col gap-4">
-        {routes?.map((route) => (
-          <div key={route.id} className="rounded-lg border border-black/10 p-4">
-            <div className="mb-3 flex items-center justify-between">
-              <p className="text-sm font-medium">Truck {route.truck_id}</p>
-              <StatusBadge status={route.status} />
-            </div>
-
-            {/* Route Map */}
-            <Suspense fallback={<div className="h-64 animate-pulse rounded-md bg-zinc-100" />}>
+      {routes?.map((route) => (
+        <Card key={route.id}>
+          <CardHeader className="flex flex-row items-center justify-between">
+            <CardTitle className="text-sm">Truck {route.truck_id.slice(0, 8)}…</CardTitle>
+            <Badge variant="secondary">{route.status}</Badge>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <Suspense fallback={<div className="h-64 animate-pulse rounded-md bg-muted" />}>
               <RouteMap route={route} />
             </Suspense>
 
-            {/* Route Flow */}
-            <ol className="mt-4 flex flex-col gap-2">
+            <div className="space-y-2">
               {route.stops.map((stop) => (
-                <li
-                  key={stop.id}
-                  className="flex items-center justify-between rounded-md bg-zinc-50 px-3 py-2 text-sm"
-                >
-                  <span className="flex items-center gap-2">
-                    <span
-                      className={`inline-flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold text-white ${
-                        stop.stop_type === "pickup" ? "bg-blue-600" : "bg-red-600"
-                      }`}
-                    >
+                <div key={stop.id} className="flex items-center justify-between rounded-md border px-3 py-2">
+                  <div className="flex items-center gap-3">
+                    <span className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold text-white ${stop.stop_type === "pickup" ? "bg-blue-600" : "bg-red-500"}`}>
                       {stop.stop_type === "pickup" ? "P" : "D"}
                     </span>
-                    <span>
-                      #{stop.stop_sequence} · {stop.stop_type} · request {stop.pickup_request_id.slice(0, 8)}…
-                      {stop.allocated_weight_kg != null && ` · ${stop.allocated_weight_kg}kg`}
-                      {stop.eta && ` · ETA ${new Date(stop.eta).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}`}
-                    </span>
-                  </span>
-                  <span className="flex items-center gap-2">
-                    <StatusBadge status={stop.status} />
+                    <div>
+                      <p className="text-sm font-medium">#{stop.stop_sequence} · {stop.stop_type}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {stop.allocated_weight_kg && `${stop.allocated_weight_kg} kg`}
+                        {stop.eta && ` · ETA ${new Date(stop.eta).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}`}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline">{stop.status}</Badge>
                     {stop.status !== "completed" && (
-                      <select
-                        value={stop.status}
-                        onChange={(e) => handleStopUpdate(stop.id, e.target.value as StopStatus)}
-                        className="rounded-md border border-black/15 px-2 py-1 text-xs"
-                      >
-                        <option value="pending">pending</option>
-                        <option value="in_progress">in_progress</option>
-                        <option value="completed">completed</option>
-                      </select>
+                      <Select value={stop.status} onValueChange={(v) => handleStopUpdate(stop.id, v as StopStatus)}>
+                        <SelectTrigger className="h-7 w-28 text-xs"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="pending">pending</SelectItem>
+                          <SelectItem value="in_progress">in progress</SelectItem>
+                          <SelectItem value="completed">completed</SelectItem>
+                        </SelectContent>
+                      </Select>
                     )}
-                  </span>
-                </li>
+                  </div>
+                </div>
               ))}
-            </ol>
-          </div>
-        ))}
-        {routes?.length === 0 && (
-          <p className="rounded-lg border border-dashed border-black/15 px-4 py-10 text-center text-black/40">
-            No routes for this date yet. Generate routes to match pending pickup requests to trucks.
-          </p>
-        )}
-      </div>
+            </div>
+          </CardContent>
+        </Card>
+      ))}
+
+      {routes?.length === 0 && (
+        <Card>
+          <CardContent className="py-16 text-center text-muted-foreground">
+            No routes for this date. Generate routes or use Transportation Plans.
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }
@@ -148,8 +134,9 @@ function RoutesContent() {
 export default function RoutesPage() {
   return (
     <RoleGuard role="logistics">
-      <Nav links={LINKS} />
-      <RoutesContent />
+      <DashboardLayout navItems={logisticsNav} title="Routes">
+        <RoutesContent />
+      </DashboardLayout>
     </RoleGuard>
   );
 }

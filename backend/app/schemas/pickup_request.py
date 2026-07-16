@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from app.schemas.route import RouteOut
 
 UnitType = Literal["kg", "sack", "pallet"]
-RequestStatus = Literal["pending", "matched", "in_progress", "completed", "cancelled"]
+RequestStatus = Literal["pending", "assigned", "optimized", "in_transit", "completed", "cancelled"]
 
 
 class RequestItemIn(BaseModel):
@@ -17,6 +17,8 @@ class RequestItemIn(BaseModel):
     length_cm: Optional[float] = None
     width_cm: Optional[float] = None
     height_cm: Optional[float] = None
+    stackable: bool = False
+    fragile: bool = False
 
 
 class RequestItemOut(RequestItemIn):
@@ -26,9 +28,11 @@ class RequestItemOut(RequestItemIn):
 
 class PickupRequestCreate(BaseModel):
     pickup_date: date
+    required_arrival_date: Optional[date] = None
     destination_name: str
     destination_lat: Optional[float] = None
     destination_lng: Optional[float] = None
+    notes: Optional[str] = None
     items: List[RequestItemIn]
 
 
@@ -36,9 +40,11 @@ class PickupRequestOut(BaseModel):
     id: str
     warehouse_id: str
     pickup_date: date
+    required_arrival_date: Optional[date] = None
     destination_name: str
     destination_lat: Optional[float] = None
     destination_lng: Optional[float] = None
+    notes: Optional[str] = None
     status: RequestStatus
     created_at: datetime
     estimated_arrival: Optional[datetime] = None

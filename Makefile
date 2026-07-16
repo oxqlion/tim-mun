@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: fe be emulator setup-be setup-fe dev commit push hooks help
+.PHONY: fe be emulator setup-be setup-fe dev commit push hooks help seed
 
 help: ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -21,6 +21,10 @@ setup-be: ## Install backend dependencies + setup venv
 # --- Firebase Emulator ---
 emulator: ## Start Firestore emulator
 	firebase emulators:start --only firestore
+
+# --- Seed ---
+seed: ## Seed demo data (requires emulator running)
+	cd backend && source .venv/bin/activate && python seed.py
 
 # --- Run all ---
 dev: ## Start emulator + backend + frontend

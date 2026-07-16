@@ -31,15 +31,17 @@ def create_truck(
     company_id = get_logistics_company_id_for_user(db, current_user.user_id)
 
     truck_ref = db.collection("trucks").document()
-    truck_ref.set(
-        {
-            "logistics_company_id": company_id,
-            "plate_number": body.plate_number,
-            "capacity_weight_kg": body.capacity_weight_kg,
-            "capacity_volume_m3": body.capacity_volume_m3,
-            "status": "available",
-        }
-    )
+    truck_ref.set({
+        "logistics_company_id": company_id,
+        "vehicle_type": body.vehicle_type,
+        "plate_number": body.plate_number,
+        "capacity_weight_kg": body.capacity_weight_kg,
+        "capacity_volume_m3": body.capacity_volume_m3,
+        "length_cm": body.length_cm,
+        "width_cm": body.width_cm,
+        "height_cm": body.height_cm,
+        "status": "available",
+    })
 
     data = truck_ref.get().to_dict()
     data["id"] = truck_ref.id

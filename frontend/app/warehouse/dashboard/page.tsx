@@ -3,94 +3,110 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import RoleGuard from "@/components/RoleGuard";
-import Nav from "@/components/Nav";
-import StatusBadge from "@/components/StatusBadge";
+import DashboardLayout, { warehouseNav } from "@/components/DashboardLayout";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { api } from "@/lib/api";
+import { PackagePlus, Clock, CheckCircle, Truck, Ban } from "lucide-react";
 import type { PickupRequestOut } from "@/types/api";
-
-const LINKS = [
-  { href: "/warehouse/dashboard", label: "Dashboard" },
-  { href: "/warehouse/requests/new", label: "New request" },
-  { href: "/warehouse/requests", label: "Requests" },
-];
 
 function DashboardContent() {
   const [requests, setRequests] = useState<PickupRequestOut[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    api
-      .get<PickupRequestOut[]>("/pickup-requests")
-      .then(setRequests)
-      .catch(() => setError("Failed to load requests"));
+    api.get<PickupRequestOut[]>("/pickup-requests").then(setRequests).catch(() => setError("Failed to load requests"));
   }, []);
 
   const counts = requests?.reduce<Record<string, number>>((acc, r) => {
     acc[r.status] = (acc[r.status] ?? 0) + 1;
     return acc;
-  }, {});
+  }, {}) ?? {};
+
+  const statCards = [
+    { label: "Pending", value: counts["pending"] ?? 0, icon: <Clock className="h-4 w-4 text-yellow-500" /> },
+    { label: "Assigned", value: (counts["assigned"] ?? 0) + (counts["optimized"] ?? 0), icon: <Truck className="h-4 w-4 text-blue-500" /> },
+    { label: "In Transit", value: counts["in_transit"] ?? 0, icon: <Truck className="h-4 w-4 text-purple-500" /> },
+    { label: "Completed", value: counts["completed"] ?? 0, icon: <CheckCircle className="h-4 w-4 text-green-500" /> },
+  ];
 
   return (
-    <div className="mx-auto w-full max-w-4xl px-6 py-8">
-      <div className="mb-8 flex items-center justify-between">
-        <h1 className="text-lg font-semibold">Dashboard</h1>
-        <Link href="/warehouse/requests/new" className="rounded-md bg-black px-4 py-2 text-sm text-white">
-          + New pickup request
-        </Link>
-      </div>
+    <div className="space-y-6">
+      {error && <p className="text-sm text-destructive">{error}</p>}
 
-      {error && <p className="text-sm text-red-600">{error}</p>}
-
-      <div className="mb-8 grid grid-cols-2 gap-4 sm:grid-cols-5">
-        {["pending", "matched", "in_progress", "completed", "cancelled"].map((status) => (
-          <div key={status} className="rounded-lg border border-black/10 p-4">
-            <p className="text-xs text-black/50">{status.replace("_", " ")}</p>
-            <p className="text-2xl font-semibold">{counts?.[status] ?? 0}</p>
-          </div>
+      {/* Stats */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {statCards.map((s) => (
+          <Card key={s.label}>
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">{s.label}</CardTitle>
+              {s.icon}
+            </CardHeader>
+            <CardContent>
+              <p className="text-2xl font-bold">{s.value}</p>
+            </CardContent>
+          </Card>
         ))}
       </div>
 
-      <h2 className="mb-3 text-sm font-medium text-black/70">Recent requests</h2>
-      <div className="overflow-hidden rounded-lg border border-black/10">
-        <table className="w-full text-sm">
-          <thead className="bg-zinc-50 text-left text-black/50">
-            <tr>
-              <th className="px-4 py-2 font-medium">Destination</th>
-              <th className="px-4 py-2 font-medium">Pickup date</th>
-              <th className="px-4 py-2 font-medium">ETA</th>
-              <th className="px-4 py-2 font-medium">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {requests?.slice(0, 5).map((r) => (
-              <tr key={r.id} className="border-t border-black/5">
-                <td className="px-4 py-2">{r.destination_name}</td>
-                <td className="px-4 py-2">{r.pickup_date}</td>
-                <td className="px-4 py-2 text-black/60">
-                  {r.estimated_arrival
-                    ? new Date(r.estimated_arrival).toLocaleString("id-ID", {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                        day: "numeric",
-                        month: "short",
-                      })
-                    : "—"}
-                </td>
-                <td className="px-4 py-2">
-                  <StatusBadge status={r.status} />
-                </td>
-              </tr>
-            ))}
-            {requests?.length === 0 && (
-              <tr>
-                <td colSpan={4} className="px-4 py-6 text-center text-black/40">
-                  No requests yet.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+      {/* Quick action */}
+      <div className="flex items-center justify-between">
+        <h2 className="text-base font-semibold">Recent Requests</h2>
+        <Button asChild>
+          <Link href="/warehouse/requests/new">
+            <PackagePlus className="mr-2 h-4 w-4" />
+            New Request
+          </Link>
+        </Button>
       </div>
+
+      {/* Recent requests table */}
+      <Card>
+        <CardContent className="p-0">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Destination</TableHead>
+                <TableHead>Pickup Date</TableHead>
+                <TableHead>ETA</TableHead>
+                <TableHead>Status</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {requests?.slice(0, 8).map((r) => (
+                <TableRow key={r.id}>
+                  <TableCell className="font-medium">{r.destination_name}</TableCell>
+                  <TableCell>{r.pickup_date}</TableCell>
+                  <TableCell className="text-muted-foreground">
+                    {r.estimated_arrival
+                      ? new Date(r.estimated_arrival).toLocaleString("id-ID", { hour: "2-digit", minute: "2-digit", day: "numeric", month: "short" })
+                      : "—"}
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant="secondary">{r.status}</Badge>
+                  </TableCell>
+                </TableRow>
+              ))}
+              {requests?.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={4} className="py-8 text-center text-muted-foreground">
+                    No requests yet.
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
     </div>
   );
 }
@@ -98,8 +114,9 @@ function DashboardContent() {
 export default function WarehouseDashboardPage() {
   return (
     <RoleGuard role="warehouse">
-      <Nav links={LINKS} />
-      <DashboardContent />
+      <DashboardLayout navItems={warehouseNav} title="Dashboard">
+        <DashboardContent />
+      </DashboardLayout>
     </RoleGuard>
   );
 }

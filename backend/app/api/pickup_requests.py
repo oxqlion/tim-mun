@@ -69,10 +69,13 @@ def create_pickup_request(
         {
             "warehouse_id": warehouse_id,
             "pickup_date": body.pickup_date.isoformat(),
+            "required_arrival_date": body.required_arrival_date.isoformat() if body.required_arrival_date else None,
             "destination_name": body.destination_name,
             "destination_lat": body.destination_lat,
             "destination_lng": body.destination_lng,
+            "notes": body.notes,
             "status": "pending",
+            "estimated_arrival": None,
             "created_at": datetime.now(timezone.utc),
         }
     )
@@ -100,6 +103,26 @@ def list_pickup_requests(current_user: CurrentUser = Depends(require_role("wareh
         .order_by("created_at", direction="DESCENDING")
         .stream()
     )
+    return [_to_out(db, doc) for doc in docs]
+
+
+@router.get("/all", response_model=list[PickupRequestOut])
+def list_all_pickup_requests(
+    status_filter: str | None = None,
+    date: str | None = None,
+    current_user: CurrentUser = Depends(require_role("logistics")),
+):
+    """List all pickup requests (logistics view). Supports filtering by status and date."""
+    db = get_db()
+
+    query = db.collection("pickup_requests")
+
+    if status_filter:
+        query = query.where("status", "==", status_filter)
+    if date:
+        query = query.where("pickup_date", "==", date)
+
+    docs = query.order_by("created_at", direction="DESCENDING").stream()
     return [_to_out(db, doc) for doc in docs]
 
 

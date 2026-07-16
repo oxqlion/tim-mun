@@ -9,7 +9,9 @@ Solves a Pickup and Delivery Problem with Capacity Constraints (PDPTW):
 Uses OSRM (OpenStreetMap Routing Machine) for real road distances.
 Falls back to haversine when OSRM is unavailable.
 
-Contract: generate_routes(db, company_id, date_iso) -> list[route_id]
+Integrates with space_optimizer for loading arrangement per truck.
+
+Contract: generate_transportation_plan(db, company_id, date_iso) -> plan_id
 """
 
 import math
@@ -23,6 +25,14 @@ import json
 from google.cloud.firestore import Client
 from ortools.constraint_solver import pywrapcp, routing_enums_pb2
 
+from app.services.fleet_allocator import allocate_fleet
+from app.services.space_optimizer import (
+    ItemForPacking,
+    SpaceResult,
+    TruckDimensions,
+    optimize_space,
+)
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -35,6 +45,7 @@ LOADING_TIME_MINUTES = 30
 START_HOUR = 8
 OSRM_BASE_URL = "http://router.project-osrm.org"
 OSRM_TIMEOUT_SECONDS = 10
+FUEL_CONSUMPTION_L_PER_KM = 0.15  # avg truck fuel consumption
 
 
 # ---------------------------------------------------------------------------
@@ -52,29 +63,19 @@ def _haversine(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
 
 
 def _build_distance_matrix(locations: list[tuple[float, float]]) -> list[list[int]]:
-    """Build a distance matrix (integer meters) from (lat, lng) tuples.
-
-    Tries OSRM Table API for real road distances first.
-    Falls back to haversine if OSRM is unavailable or errors.
-    """
+    """Build distance matrix. Tries OSRM first, falls back to haversine."""
     matrix = _build_distance_matrix_osrm(locations)
     if matrix is not None:
         return matrix
-
     logger.warning("OSRM unavailable, falling back to haversine distances")
     return _build_distance_matrix_haversine(locations)
 
 
 def _build_distance_matrix_osrm(locations: list[tuple[float, float]]) -> Optional[list[list[int]]]:
-    """Fetch real road distance matrix from OSRM Table API.
-
-    OSRM expects coordinates as lng,lat (not lat,lng).
-    Returns NxN matrix in meters, or None on failure.
-    """
+    """Fetch real road distance matrix from OSRM Table API."""
     if not locations:
         return None
 
-    # OSRM format: lng,lat;lng,lat;...
     coords_str = ";".join(f"{lng},{lat}" for lat, lng in locations)
     url = f"{OSRM_BASE_URL}/table/v1/driving/{coords_str}?annotations=distance"
 
@@ -84,17 +85,14 @@ def _build_distance_matrix_osrm(locations: list[tuple[float, float]]) -> Optiona
             data = json.loads(response.read().decode())
 
         if data.get("code") != "Ok":
-            logger.warning("OSRM returned non-OK code: %s", data.get("code"))
             return None
 
-        # OSRM returns distances in meters (floats), convert to int
         raw_matrix = data["distances"]
         n = len(locations)
         matrix = [[0] * n for _ in range(n)]
         for i in range(n):
             for j in range(n):
                 matrix[i][j] = int(raw_matrix[i][j])
-
         return matrix
 
     except (URLError, TimeoutError, json.JSONDecodeError, KeyError) as e:
@@ -117,21 +115,76 @@ def _build_distance_matrix_haversine(locations: list[tuple[float, float]]) -> li
 
 
 # ---------------------------------------------------------------------------
-# Weight calculation
+# OSRM duration
 # ---------------------------------------------------------------------------
 
 
-def _weight_for_request(db: Client, request_id: str) -> float:
-    """Calculate total weight for a pickup request from its items."""
-    items = db.collection("request_items").where("pickup_request_id", "==", request_id).stream()
-    total = 0.0
-    for doc in items:
-        item = doc.to_dict()
-        if item.get("estimated_weight_kg") is not None:
-            total += item["estimated_weight_kg"]
-        elif item.get("unit_type") == "kg":
-            total += item.get("quantity", 0)
-    return total
+def _get_duration_matrix_osrm(locations: list[tuple[float, float]]) -> Optional[list[list[float]]]:
+    """Fetch travel duration matrix from OSRM Table API."""
+    if not locations:
+        return None
+
+    coords_str = ";".join(f"{lng},{lat}" for lat, lng in locations)
+    url = f"{OSRM_BASE_URL}/table/v1/driving/{coords_str}?annotations=duration"
+
+    try:
+        req = Request(url, headers={"User-Agent": "agri-logistics-poc/1.0"})
+        with urlopen(req, timeout=OSRM_TIMEOUT_SECONDS) as response:
+            data = json.loads(response.read().decode())
+
+        if data.get("code") != "Ok":
+            return None
+        return data["durations"]
+
+    except (URLError, TimeoutError, json.JSONDecodeError, KeyError) as e:
+        logger.warning("OSRM duration request failed: %s", e)
+        return None
+
+
+# ---------------------------------------------------------------------------
+# ETA calculation
+# ---------------------------------------------------------------------------
+
+
+def _calculate_eta_for_route(
+    route_nodes: list[int],
+    locations: list[tuple[float, float]],
+    node_info: dict[int, dict],
+    date_iso: str,
+    duration_matrix: Optional[list[list[float]]] = None,
+) -> dict[str, datetime]:
+    """Calculate ETA at dropoff node for each request in a route."""
+    year, month, day = map(int, date_iso.split("-"))
+    departure = datetime(year, month, day, START_HOUR, 0, 0, tzinfo=timezone.utc)
+
+    eta_map: dict[str, datetime] = {}
+    current_time = departure
+    prev_node_idx = 0
+
+    for node_idx in route_nodes:
+        if duration_matrix is not None:
+            travel_seconds = duration_matrix[prev_node_idx][node_idx]
+            current_time += timedelta(seconds=travel_seconds)
+        else:
+            node_location = locations[node_idx]
+            prev_location = locations[prev_node_idx]
+            travel_km = _haversine(
+                prev_location[0], prev_location[1],
+                node_location[0], node_location[1],
+            )
+            current_time += timedelta(hours=travel_km / AVG_SPEED_KMH)
+
+        info = node_info.get(node_idx, {})
+        if info.get("type") == "pickup":
+            current_time += timedelta(minutes=LOADING_TIME_MINUTES)
+        if info.get("type") == "dropoff":
+            doc_id = info.get("doc_id")
+            if doc_id:
+                eta_map[doc_id] = current_time
+
+        prev_node_idx = node_idx
+
+    return eta_map
 
 
 # ---------------------------------------------------------------------------
@@ -146,80 +199,38 @@ def _solve_pdp(
     vehicle_capacities: list[int],
     num_vehicles: int,
 ) -> Optional[list[list[int]]]:
-    """Solve Pickup & Delivery Problem with capacity constraints.
-
-    Args:
-        distance_matrix: NxN integer distance matrix (meters).
-        pickups_deliveries: List of (pickup_node, delivery_node) pairs.
-        demands: Demand at each node. Pickup nodes have positive demand,
-                 delivery nodes have negative demand, depot is 0.
-        vehicle_capacities: Max capacity per vehicle.
-        num_vehicles: Number of available vehicles.
-
-    Returns:
-        List of node-index routes per vehicle (excluding depot), or None.
-    """
+    """Solve Pickup & Delivery Problem with capacity constraints."""
     n = len(distance_matrix)
     manager = pywrapcp.RoutingIndexManager(n, num_vehicles, 0)
     routing = pywrapcp.RoutingModel(manager)
 
-    # Distance callback
     def distance_callback(from_index, to_index):
-        from_node = manager.IndexToNode(from_index)
-        to_node = manager.IndexToNode(to_index)
-        return distance_matrix[from_node][to_node]
+        return distance_matrix[manager.IndexToNode(from_index)][manager.IndexToNode(to_index)]
 
     transit_callback_index = routing.RegisterTransitCallback(distance_callback)
     routing.SetArcCostEvaluatorOfAllVehicles(transit_callback_index)
 
-    # Distance dimension (needed for pickup-delivery ordering constraint)
-    routing.AddDimension(
-        transit_callback_index,
-        0,  # no slack
-        3_000_000,  # max distance per vehicle (3000 km in meters)
-        True,
-        "Distance",
-    )
+    routing.AddDimension(transit_callback_index, 0, 3_000_000, True, "Distance")
     distance_dimension = routing.GetDimensionOrDie("Distance")
 
-    # Capacity constraint
     def demand_callback(from_index):
-        from_node = manager.IndexToNode(from_index)
-        return demands[from_node]
+        return demands[manager.IndexToNode(from_index)]
 
     demand_callback_index = routing.RegisterUnaryTransitCallback(demand_callback)
-    routing.AddDimensionWithVehicleCapacity(
-        demand_callback_index,
-        0,
-        vehicle_capacities,
-        True,
-        "Capacity",
-    )
+    routing.AddDimensionWithVehicleCapacity(demand_callback_index, 0, vehicle_capacities, True, "Capacity")
 
-    # Pickup and delivery constraints
     for pickup_node, delivery_node in pickups_deliveries:
         pickup_index = manager.NodeToIndex(pickup_node)
         delivery_index = manager.NodeToIndex(delivery_node)
-
-        # Same vehicle
         routing.AddPickupAndDelivery(pickup_index, delivery_index)
+        routing.solver().Add(routing.VehicleVar(pickup_index) == routing.VehicleVar(delivery_index))
         routing.solver().Add(
-            routing.VehicleVar(pickup_index) == routing.VehicleVar(delivery_index)
-        )
-        # Pickup before delivery
-        routing.solver().Add(
-            distance_dimension.CumulVar(pickup_index)
-            <= distance_dimension.CumulVar(delivery_index)
+            distance_dimension.CumulVar(pickup_index) <= distance_dimension.CumulVar(delivery_index)
         )
 
-    # Search parameters
     search_params = pywrapcp.DefaultRoutingSearchParameters()
-    search_params.first_solution_strategy = (
-        routing_enums_pb2.FirstSolutionStrategy.PARALLEL_CHEAPEST_INSERTION
-    )
-    search_params.local_search_metaheuristic = (
-        routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH
-    )
+    search_params.first_solution_strategy = routing_enums_pb2.FirstSolutionStrategy.PARALLEL_CHEAPEST_INSERTION
+    search_params.local_search_metaheuristic = routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH
     search_params.time_limit.seconds = 10
 
     solution = routing.SolveWithParameters(search_params)
@@ -241,311 +252,308 @@ def _solve_pdp(
 
 
 # ---------------------------------------------------------------------------
-# ETA calculation
+# Space optimization per route
 # ---------------------------------------------------------------------------
 
 
-def _get_duration_matrix_osrm(locations: list[tuple[float, float]]) -> Optional[list[list[float]]]:
-    """Fetch travel duration matrix from OSRM Table API.
+def _run_space_optimization(
+    db: Client, truck_id: str, request_ids: list[str]
+) -> SpaceResult:
+    """Run space optimization for items assigned to a truck."""
+    truck_doc = db.collection("trucks").document(truck_id).get()
+    td = truck_doc.to_dict()
 
-    Returns NxN matrix in seconds, or None on failure.
-    """
-    if not locations:
-        return None
+    truck = TruckDimensions(
+        id=truck_id,
+        capacity_weight_kg=td["capacity_weight_kg"],
+        capacity_volume_m3=td.get("capacity_volume_m3"),
+        length_cm=td.get("length_cm"),
+        width_cm=td.get("width_cm"),
+        height_cm=td.get("height_cm"),
+    )
 
-    coords_str = ";".join(f"{lng},{lat}" for lat, lng in locations)
-    url = f"{OSRM_BASE_URL}/table/v1/driving/{coords_str}?annotations=duration"
-
-    try:
-        req = Request(url, headers={"User-Agent": "agri-logistics-poc/1.0"})
-        with urlopen(req, timeout=OSRM_TIMEOUT_SECONDS) as response:
-            data = json.loads(response.read().decode())
-
-        if data.get("code") != "Ok":
-            return None
-
-        return data["durations"]
-
-    except (URLError, TimeoutError, json.JSONDecodeError, KeyError) as e:
-        logger.warning("OSRM duration request failed: %s", e)
-        return None
-
-
-def _calculate_eta_for_route(
-    route_nodes: list[int],
-    locations: list[tuple[float, float]],
-    node_info: dict[int, dict],
-    date_iso: str,
-    duration_matrix: Optional[list[list[float]]] = None,
-) -> dict[str, datetime]:
-    """Calculate ETA at dropoff node for each request in a route.
-
-    Uses OSRM duration matrix if available, otherwise haversine / avg speed.
-    """
-    year, month, day = map(int, date_iso.split("-"))
-    departure = datetime(year, month, day, START_HOUR, 0, 0, tzinfo=timezone.utc)
-
-    eta_map: dict[str, datetime] = {}
-    current_time = departure
-    prev_node_idx = 0  # start at depot
-
-    for node_idx in route_nodes:
-        # Travel time to this node
-        if duration_matrix is not None:
-            travel_seconds = duration_matrix[prev_node_idx][node_idx]
-            current_time += timedelta(seconds=travel_seconds)
-        else:
-            node_location = locations[node_idx]
-            prev_location = locations[prev_node_idx]
-            travel_km = _haversine(
-                prev_location[0], prev_location[1],
-                node_location[0], node_location[1],
+    items: list[ItemForPacking] = []
+    for req_id in request_ids:
+        item_docs = db.collection("request_items").where("pickup_request_id", "==", req_id).stream()
+        for item_doc in item_docs:
+            item_data = item_doc.to_dict()
+            weight = item_data.get("estimated_weight_kg") or (
+                item_data.get("quantity", 0) if item_data.get("unit_type") == "kg" else 0
             )
-            travel_hours = travel_km / AVG_SPEED_KMH
-            current_time += timedelta(hours=travel_hours)
+            items.append(ItemForPacking(
+                id=item_doc.id,
+                pickup_request_id=req_id,
+                commodity_name=item_data.get("commodity_name", ""),
+                quantity=item_data.get("quantity", 1),
+                weight_kg=weight,
+                length_cm=item_data.get("length_cm") or 50,  # defaults for items without dims
+                width_cm=item_data.get("width_cm") or 50,
+                height_cm=item_data.get("height_cm") or 50,
+                stackable=item_data.get("stackable", False),
+                fragile=item_data.get("fragile", False),
+            ))
 
-        info = node_info.get(node_idx, {})
-
-        # Add loading time at pickup stops
-        if info.get("type") == "pickup":
-            current_time += timedelta(minutes=LOADING_TIME_MINUTES)
-
-        # Record ETA at dropoff stops
-        if info.get("type") == "dropoff":
-            doc_id = info.get("doc_id")
-            if doc_id:
-                eta_map[doc_id] = current_time
-
-        prev_node_idx = node_idx
-
-    return eta_map
+    return optimize_space(items, truck)
 
 
 # ---------------------------------------------------------------------------
-# Main entry point
+# Main entry point — Transportation Plan generation
 # ---------------------------------------------------------------------------
 
 
-def generate_routes(db: Client, company_id: str, date_iso: str) -> list[str]:
-    """Generate optimized routes using Pickup & Delivery Problem solver.
+def generate_transportation_plan(db: Client, company_id: str, date_iso: str) -> str:
+    """Generate a full transportation plan: fleet allocation + route + space optimization.
 
-    Each pickup request becomes two nodes:
-    - Pickup node at the warehouse location
-    - Delivery node at the destination location
-
-    OR-Tools ensures pickup happens before delivery on the same truck,
-    and groups requests with same-direction destinations together.
+    Returns the transportation_plan document ID.
     """
-    # Gather pending requests
-    pending_docs = list(
-        db.collection("pickup_requests")
-        .where("pickup_date", "==", date_iso)
-        .where("status", "==", "pending")
-        .stream()
-    )
-    if not pending_docs:
-        return []
+    # Create plan document
+    plan_ref = db.collection("transportation_plans").document()
+    plan_ref.set({
+        "logistics_company_id": company_id,
+        "plan_date": date_iso,
+        "status": "draft",
+        "total_requests": 0,
+        "total_trucks_used": 0,
+        "total_distance_km": None,
+        "estimated_fuel_liters": None,
+        "fuel_savings_percent": None,
+        "created_at": datetime.now(timezone.utc),
+        "approved_at": None,
+    })
 
-    # Gather available trucks
-    trucks = list(
-        db.collection("trucks")
-        .where("logistics_company_id", "==", company_id)
-        .where("status", "==", "available")
-        .stream()
-    )
-    if not trucks:
-        return []
+    # Step 1: Fleet allocation
+    allocation = allocate_fleet(db, company_id, date_iso)
+    if not allocation:
+        plan_ref.update({"status": "optimized", "total_requests": 0, "total_trucks_used": 0})
+        return plan_ref.id
 
-    # Resolve locations for each request
+    # Gather all request data for route optimization
+    all_request_ids = []
+    for reqs in allocation.values():
+        for r in reqs:
+            all_request_ids.append(r["doc_id"])
+
+    # Resolve warehouse locations
     request_data = []
-    for doc in pending_docs:
-        data = doc.to_dict()
-        warehouse_doc = db.collection("warehouses").document(data["warehouse_id"]).get()
-        wh = warehouse_doc.to_dict() if warehouse_doc.exists else {}
-        weight = _weight_for_request(db, doc.id)
-        request_data.append({
-            "doc_id": doc.id,
-            "data": data,
-            "weight": weight,
-            "pickup_lat": wh.get("lat"),
-            "pickup_lng": wh.get("lng"),
-            "delivery_lat": data.get("destination_lat"),
-            "delivery_lng": data.get("destination_lng"),
-        })
+    for truck_id, reqs in allocation.items():
+        for r in reqs:
+            data = r["data"]
+            warehouse_doc = db.collection("warehouses").document(data["warehouse_id"]).get()
+            wh = warehouse_doc.to_dict() if warehouse_doc.exists else {}
+            request_data.append({
+                "doc_id": r["doc_id"],
+                "truck_id": truck_id,
+                "data": data,
+                "weight": r["weight"],
+                "pickup_lat": wh.get("lat"),
+                "pickup_lng": wh.get("lng"),
+                "delivery_lat": data.get("destination_lat"),
+                "delivery_lng": data.get("destination_lng"),
+            })
 
-    # Split: need BOTH pickup and delivery coords for PDP
-    geo_requests = [
-        r for r in request_data
-        if r["pickup_lat"] is not None
-        and r["pickup_lng"] is not None
-        and r["delivery_lat"] is not None
-        and r["delivery_lng"] is not None
-    ]
-    no_geo_requests = [r for r in request_data if r not in geo_requests]
-
+    # Step 2: Route optimization per truck
+    total_distance_km = 0.0
     created_route_ids: list[str] = []
 
-    # --- OR-Tools Pickup & Delivery for geo-enabled requests ---
-    if geo_requests:
-        # Build locations list:
-        # Index 0: depot (centroid of all pickup locations)
-        # Index 1, 2: pickup_node, delivery_node for request 0
-        # Index 3, 4: pickup_node, delivery_node for request 1
-        # ...
-        avg_lat = sum(r["pickup_lat"] for r in geo_requests) / len(geo_requests)
-        avg_lng = sum(r["pickup_lng"] for r in geo_requests) / len(geo_requests)
+    for truck_id, reqs in allocation.items():
+        truck_requests = [r for r in request_data if r["truck_id"] == truck_id]
 
-        locations: list[tuple[float, float]] = [(avg_lat, avg_lng)]  # depot
-        demands: list[int] = [0]  # depot demand
-        pickups_deliveries: list[tuple[int, int]] = []
-        node_info: dict[int, dict] = {}  # node_idx -> {type, doc_id, request_idx}
+        # Check if we have geo data for PDP
+        geo_requests = [
+            r for r in truck_requests
+            if r["pickup_lat"] and r["pickup_lng"] and r["delivery_lat"] and r["delivery_lng"]
+        ]
 
-        for i, req in enumerate(geo_requests):
-            pickup_idx = len(locations)
-            locations.append((req["pickup_lat"], req["pickup_lng"]))
-            demands.append(int(req["weight"]))  # positive = load at pickup
-            node_info[pickup_idx] = {"type": "pickup", "doc_id": req["doc_id"], "request_idx": i}
+        # Get request IDs for this truck
+        truck_request_ids = [r["doc_id"] for r in truck_requests]
 
-            delivery_idx = len(locations)
-            locations.append((req["delivery_lat"], req["delivery_lng"]))
-            demands.append(-int(req["weight"]))  # negative = unload at delivery
-            node_info[delivery_idx] = {"type": "dropoff", "doc_id": req["doc_id"], "request_idx": i}
+        # Step 2b: Space optimization
+        space_result = _run_space_optimization(db, truck_id, truck_request_ids)
 
-            pickups_deliveries.append((pickup_idx, delivery_idx))
+        # Create route
+        route_ref = db.collection("routes").document()
+        route_ref.set({
+            "transportation_plan_id": plan_ref.id,
+            "truck_id": truck_id,
+            "route_date": date_iso,
+            "status": "planned",
+            "total_distance_km": None,
+            "space_utilization_percent": space_result.space_utilization_percent,
+            "weight_utilization_percent": space_result.weight_utilization_percent,
+            "generated_at": datetime.now(timezone.utc),
+        })
+        created_route_ids.append(route_ref.id)
 
-        distance_matrix = _build_distance_matrix(locations)
+        # Save space allocations
+        for loaded in space_result.loaded_items:
+            db.collection("space_allocations").document().set({
+                "route_id": route_ref.id,
+                "pickup_request_id": loaded.pickup_request_id,
+                "item_id": loaded.item_id,
+                "commodity_name": loaded.commodity_name,
+                "loading_sequence": loaded.loading_sequence,
+                "position_notes": loaded.position_notes,
+                "weight_kg": loaded.weight_kg,
+                "volume_m3": loaded.volume_m3,
+            })
 
-        vehicle_capacities = [int(t.to_dict()["capacity_weight_kg"]) for t in trucks]
-        num_vehicles = len(trucks)
+        # Route optimization with OR-Tools if geo data available
+        if geo_requests and len(geo_requests) > 0:
+            avg_lat = sum(r["pickup_lat"] for r in geo_requests) / len(geo_requests)
+            avg_lng = sum(r["pickup_lng"] for r in geo_requests) / len(geo_requests)
 
-        solution = _solve_pdp(
-            distance_matrix, pickups_deliveries, demands, vehicle_capacities, num_vehicles
-        )
+            locations: list[tuple[float, float]] = [(avg_lat, avg_lng)]
+            demands: list[int] = [0]
+            pickups_deliveries: list[tuple[int, int]] = []
+            node_info: dict[int, dict] = {}
 
-        if solution:
-            # Fetch OSRM duration matrix for ETA calculation
-            duration_matrix = _get_duration_matrix_osrm(locations)
+            for i, req in enumerate(geo_requests):
+                pickup_idx = len(locations)
+                locations.append((req["pickup_lat"], req["pickup_lng"]))
+                demands.append(int(req["weight"]))
+                node_info[pickup_idx] = {"type": "pickup", "doc_id": req["doc_id"], "request_idx": i}
 
-            for vehicle_idx, route_nodes in enumerate(solution):
-                if not route_nodes:
-                    continue
+                delivery_idx = len(locations)
+                locations.append((req["delivery_lat"], req["delivery_lng"]))
+                demands.append(-int(req["weight"]))
+                node_info[delivery_idx] = {"type": "dropoff", "doc_id": req["doc_id"], "request_idx": i}
 
-                truck_doc = trucks[vehicle_idx]
+                pickups_deliveries.append((pickup_idx, delivery_idx))
 
-                # Calculate ETA for deliveries in this route
-                eta_map = _calculate_eta_for_route(
-                    route_nodes, locations, node_info, date_iso, duration_matrix
-                )
+            distance_matrix = _build_distance_matrix(locations)
+            vehicle_capacities = [int(space_result.truck_weight_capacity_kg)]
 
-                # Create route document
-                route_ref = db.collection("routes").document()
-                route_ref.set({
-                    "truck_id": truck_doc.id,
-                    "route_date": date_iso,
-                    "status": "planned",
-                    "total_distance_km": None,
-                    "generated_at": datetime.now(timezone.utc),
-                })
-                created_route_ids.append(route_ref.id)
-                db.collection("trucks").document(truck_doc.id).update({"status": "on_trip"})
+            solution = _solve_pdp(distance_matrix, pickups_deliveries, demands, vehicle_capacities, 1)
 
-                # Create route stops in sequence
+            if solution and solution[0]:
+                route_nodes = solution[0]
+                duration_matrix = _get_duration_matrix_osrm(locations)
+                eta_map = _calculate_eta_for_route(route_nodes, locations, node_info, date_iso, duration_matrix)
+
+                # Calculate route distance
+                route_distance_m = 0
+                prev = 0
+                for node in route_nodes:
+                    route_distance_m += distance_matrix[prev][node]
+                    prev = node
+                route_distance_km = route_distance_m / 1000
+                total_distance_km += route_distance_km
+
+                route_ref.update({"total_distance_km": round(route_distance_km, 2)})
+
+                # Create stops
                 seq = 1
                 for node_idx in route_nodes:
                     info = node_info.get(node_idx)
                     if not info:
                         continue
-
                     req = geo_requests[info["request_idx"]]
-                    stop_type = info["type"]  # "pickup" or "dropoff"
                     stop_location = locations[node_idx]
 
                     db.collection("route_stops").document().set({
                         "route_id": route_ref.id,
                         "pickup_request_id": req["doc_id"],
                         "stop_sequence": seq,
-                        "stop_type": stop_type,
+                        "stop_type": info["type"],
                         "lat": stop_location[0],
                         "lng": stop_location[1],
-                        "eta": eta_map.get(req["doc_id"]) if stop_type == "dropoff" else None,
+                        "eta": eta_map.get(req["doc_id"]) if info["type"] == "dropoff" else None,
                         "allocated_weight_kg": req["weight"],
                         "allocated_volume_m3": None,
                         "status": "pending",
                     })
                     seq += 1
 
-                # Update pickup request statuses + ETA
-                seen_requests = set()
+                # Update request statuses + ETA
+                seen = set()
                 for node_idx in route_nodes:
                     info = node_info.get(node_idx)
-                    if not info or info["doc_id"] in seen_requests:
+                    if not info or info["doc_id"] in seen:
                         continue
-                    seen_requests.add(info["doc_id"])
-
-                    req = geo_requests[info["request_idx"]]
-                    update_data: dict = {"status": "matched"}
-                    if req["doc_id"] in eta_map:
-                        update_data["estimated_arrival"] = eta_map[req["doc_id"]]
-                    db.collection("pickup_requests").document(req["doc_id"]).update(update_data)
+                    seen.add(info["doc_id"])
+                    update_data: dict = {"status": "optimized"}
+                    if info["doc_id"] in eta_map:
+                        update_data["estimated_arrival"] = eta_map[info["doc_id"]]
+                    db.collection("pickup_requests").document(info["doc_id"]).update(update_data)
+            else:
+                # Fallback: create simple stops without optimization
+                _create_fallback_stops(db, route_ref.id, truck_requests)
         else:
-            # Solver couldn't find solution — fall back to naive
-            no_geo_requests.extend(geo_requests)
+            # No geo data: create basic stops
+            _create_fallback_stops(db, route_ref.id, truck_requests)
 
-    # --- Naive first-fit fallback for requests without full coordinates ---
-    if no_geo_requests:
-        used_truck_ids = set()
-        for rid in created_route_ids:
-            route_doc = db.collection("routes").document(rid).get()
-            if route_doc.exists:
-                used_truck_ids.add(route_doc.to_dict()["truck_id"])
+        # Update truck status
+        db.collection("trucks").document(truck_id).update({"status": "on_trip"})
 
-        remaining_trucks = [
-            {
-                "id": t.id,
-                "remaining_weight_kg": t.to_dict()["capacity_weight_kg"],
-                "route_id": None,
-                "next_sequence": 1,
-            }
-            for t in trucks
-            if t.id not in used_truck_ids
-        ]
+    # Calculate fuel metrics
+    estimated_fuel = total_distance_km * FUEL_CONSUMPTION_L_PER_KM
+    # Naive direct distance (all requests going individually)
+    naive_distance = _calculate_naive_distance(request_data)
+    fuel_savings = ((naive_distance - total_distance_km) / naive_distance * 100) if naive_distance > 0 else 0
 
-        no_geo_requests.sort(key=lambda r: r["data"].get("destination_name", ""))
+    # Update plan
+    plan_ref.update({
+        "status": "optimized",
+        "total_requests": len(all_request_ids),
+        "total_trucks_used": len(allocation),
+        "total_distance_km": round(total_distance_km, 2) if total_distance_km > 0 else None,
+        "estimated_fuel_liters": round(estimated_fuel, 2) if estimated_fuel > 0 else None,
+        "fuel_savings_percent": round(max(0, fuel_savings), 1) if naive_distance > 0 else None,
+    })
 
-        for req in no_geo_requests:
-            truck = next(
-                (t for t in remaining_trucks if t["remaining_weight_kg"] >= req["weight"]),
-                None,
-            )
-            if truck is None:
-                continue
+    return plan_ref.id
 
-            if truck["route_id"] is None:
-                route_ref = db.collection("routes").document()
-                route_ref.set({
-                    "truck_id": truck["id"],
-                    "route_date": date_iso,
-                    "status": "planned",
-                    "total_distance_km": None,
-                    "generated_at": datetime.now(timezone.utc),
-                })
-                truck["route_id"] = route_ref.id
-                created_route_ids.append(route_ref.id)
-                db.collection("trucks").document(truck["id"]).update({"status": "on_trip"})
 
-            db.collection("route_stops").document().set({
-                "route_id": truck["route_id"],
-                "pickup_request_id": req["doc_id"],
-                "stop_sequence": truck["next_sequence"],
-                "stop_type": "pickup",
-                "eta": None,
-                "allocated_weight_kg": req["weight"],
-                "allocated_volume_m3": None,
-                "status": "pending",
-            })
-            truck["next_sequence"] += 1
-            truck["remaining_weight_kg"] -= req["weight"]
+def _create_fallback_stops(db: Client, route_id: str, requests: list[dict]) -> None:
+    """Create simple sequential stops without route optimization."""
+    seq = 1
+    for req in requests:
+        # Pickup stop
+        db.collection("route_stops").document().set({
+            "route_id": route_id,
+            "pickup_request_id": req["doc_id"],
+            "stop_sequence": seq,
+            "stop_type": "pickup",
+            "lat": req.get("pickup_lat"),
+            "lng": req.get("pickup_lng"),
+            "eta": None,
+            "allocated_weight_kg": req["weight"],
+            "allocated_volume_m3": None,
+            "status": "pending",
+        })
+        seq += 1
+        # Dropoff stop
+        db.collection("route_stops").document().set({
+            "route_id": route_id,
+            "pickup_request_id": req["doc_id"],
+            "stop_sequence": seq,
+            "stop_type": "dropoff",
+            "lat": req.get("delivery_lat"),
+            "lng": req.get("delivery_lng"),
+            "eta": None,
+            "allocated_weight_kg": req["weight"],
+            "allocated_volume_m3": None,
+            "status": "pending",
+        })
+        seq += 1
+        db.collection("pickup_requests").document(req["doc_id"]).update({"status": "optimized"})
 
-            db.collection("pickup_requests").document(req["doc_id"]).update({"status": "matched"})
 
-    return created_route_ids
+def _calculate_naive_distance(request_data: list[dict]) -> float:
+    """Calculate total distance if each request was delivered individually (no optimization)."""
+    total = 0.0
+    for r in request_data:
+        plat, plng = r.get("pickup_lat"), r.get("pickup_lng")
+        dlat, dlng = r.get("delivery_lat"), r.get("delivery_lng")
+        if plat and plng and dlat and dlng:
+            total += _haversine(plat, plng, dlat, dlng)
+    return total
+
+
+# Legacy compatibility wrapper
+def generate_routes(db: Client, company_id: str, date_iso: str) -> list[str]:
+    """Legacy wrapper — generates a plan and returns route IDs."""
+    plan_id = generate_transportation_plan(db, company_id, date_iso)
+    # Get route IDs from the plan
+    routes = db.collection("routes").where("transportation_plan_id", "==", plan_id).stream()
+    return [doc.id for doc in routes]

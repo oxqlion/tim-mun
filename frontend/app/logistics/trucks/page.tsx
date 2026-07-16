@@ -2,29 +2,44 @@
 
 import { useEffect, useState } from "react";
 import RoleGuard from "@/components/RoleGuard";
-import Nav from "@/components/Nav";
-import StatusBadge from "@/components/StatusBadge";
+import DashboardLayout, { logisticsNav } from "@/components/DashboardLayout";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { api, ApiError } from "@/lib/api";
-import type { TruckOut } from "@/types/api";
-
-const LINKS = [
-  { href: "/logistics/dashboard", label: "Dashboard" },
-  { href: "/logistics/routes", label: "Routes" },
-  { href: "/logistics/trucks", label: "Trucks" },
-];
+import { Plus, Loader2 } from "lucide-react";
+import type { TruckOut, VehicleType } from "@/types/api";
 
 function TrucksContent() {
   const [trucks, setTrucks] = useState<TruckOut[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [vehicleType, setVehicleType] = useState<VehicleType>("truck_medium");
   const [plate, setPlate] = useState("");
   const [capacity, setCapacity] = useState("");
+  const [lengthCm, setLengthCm] = useState("");
+  const [widthCm, setWidthCm] = useState("");
+  const [heightCm, setHeightCm] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   function load() {
-    api
-      .get<TruckOut[]>("/trucks")
-      .then(setTrucks)
-      .catch(() => setError("Failed to load trucks"));
+    api.get<TruckOut[]>("/trucks").then(setTrucks).catch(() => setError("Failed to load trucks"));
   }
 
   useEffect(load, []);
@@ -35,11 +50,18 @@ function TrucksContent() {
     setSubmitting(true);
     try {
       await api.post("/trucks", {
+        vehicle_type: vehicleType,
         plate_number: plate,
         capacity_weight_kg: Number(capacity),
+        length_cm: lengthCm ? Number(lengthCm) : undefined,
+        width_cm: widthCm ? Number(widthCm) : undefined,
+        height_cm: heightCm ? Number(heightCm) : undefined,
       });
       setPlate("");
       setCapacity("");
+      setLengthCm("");
+      setWidthCm("");
+      setHeightCm("");
       load();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to add truck");
@@ -48,72 +70,116 @@ function TrucksContent() {
     }
   }
 
+  const statusColor = (s: string) => {
+    switch (s) {
+      case "available": return "default";
+      case "on_trip": return "secondary";
+      case "maintenance": return "destructive";
+      default: return "outline";
+    }
+  };
+
   return (
-    <div className="mx-auto w-full max-w-3xl px-6 py-8">
-      <h1 className="mb-6 text-lg font-semibold">Fleet</h1>
+    <div className="space-y-6">
+      {/* Add truck form */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Add Vehicle</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleAddTruck} className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+            <div className="space-y-2">
+              <Label>Vehicle type</Label>
+              <Select value={vehicleType} onValueChange={(v) => setVehicleType(v as VehicleType)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="pickup">Pickup</SelectItem>
+                  <SelectItem value="truck_small">Truck (S)</SelectItem>
+                  <SelectItem value="truck_medium">Truck (M)</SelectItem>
+                  <SelectItem value="truck_large">Truck (L)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Plate number *</Label>
+              <Input required value={plate} onChange={(e) => setPlate(e.target.value)} placeholder="B 1234 XYZ" />
+            </div>
+            <div className="space-y-2">
+              <Label>Max payload (kg) *</Label>
+              <Input required type="number" min={0} value={capacity} onChange={(e) => setCapacity(e.target.value)} />
+            </div>
+            <div />
+            <div className="space-y-2">
+              <Label>Interior L (cm)</Label>
+              <Input type="number" min={0} value={lengthCm} onChange={(e) => setLengthCm(e.target.value)} placeholder="400" />
+            </div>
+            <div className="space-y-2">
+              <Label>Interior W (cm)</Label>
+              <Input type="number" min={0} value={widthCm} onChange={(e) => setWidthCm(e.target.value)} placeholder="200" />
+            </div>
+            <div className="space-y-2">
+              <Label>Interior H (cm)</Label>
+              <Input type="number" min={0} value={heightCm} onChange={(e) => setHeightCm(e.target.value)} placeholder="200" />
+            </div>
+            <div className="flex items-end">
+              <Button type="submit" disabled={submitting} className="w-full">
+                {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
+                Add Truck
+              </Button>
+            </div>
+          </form>
+        </CardContent>
+      </Card>
 
-      <form onSubmit={handleAddTruck} className="mb-8 flex flex-wrap items-end gap-3 rounded-lg border border-black/10 p-4">
-        <label className="flex flex-col gap-1 text-sm">
-          Plate number
-          <input
-            required
-            value={plate}
-            onChange={(e) => setPlate(e.target.value)}
-            className="rounded-md border border-black/15 px-3 py-1.5"
-          />
-        </label>
-        <label className="flex flex-col gap-1 text-sm">
-          Capacity (kg)
-          <input
-            required
-            type="number"
-            min={0}
-            step="any"
-            value={capacity}
-            onChange={(e) => setCapacity(e.target.value)}
-            className="rounded-md border border-black/15 px-3 py-1.5"
-          />
-        </label>
-        <button
-          type="submit"
-          disabled={submitting}
-          className="rounded-md bg-black px-4 py-2 text-sm text-white disabled:opacity-50"
-        >
-          Add truck
-        </button>
-      </form>
+      {error && <p className="text-sm text-destructive">{error}</p>}
 
-      {error && <p className="mb-4 text-sm text-red-600">{error}</p>}
-
-      <div className="overflow-hidden rounded-lg border border-black/10">
-        <table className="w-full text-sm">
-          <thead className="bg-zinc-50 text-left text-black/50">
-            <tr>
-              <th className="px-4 py-2 font-medium">Plate</th>
-              <th className="px-4 py-2 font-medium">Capacity (kg)</th>
-              <th className="px-4 py-2 font-medium">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {trucks?.map((t) => (
-              <tr key={t.id} className="border-t border-black/5">
-                <td className="px-4 py-2">{t.plate_number}</td>
-                <td className="px-4 py-2">{t.capacity_weight_kg}</td>
-                <td className="px-4 py-2">
-                  <StatusBadge status={t.status} />
-                </td>
-              </tr>
-            ))}
-            {trucks?.length === 0 && (
-              <tr>
-                <td colSpan={3} className="px-4 py-6 text-center text-black/40">
-                  No trucks yet — add one above.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+      {/* Trucks table */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Fleet ({trucks?.length ?? 0})</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="rounded-md border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Type</TableHead>
+                  <TableHead>Plate</TableHead>
+                  <TableHead>Payload (kg)</TableHead>
+                  <TableHead>Dimensions (cm)</TableHead>
+                  <TableHead>Status</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {trucks?.map((t) => (
+                  <TableRow key={t.id}>
+                    <TableCell className="capitalize">{t.vehicle_type.replace("_", " ")}</TableCell>
+                    <TableCell className="font-mono text-sm">{t.plate_number}</TableCell>
+                    <TableCell>{t.capacity_weight_kg.toLocaleString()}</TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {t.length_cm && t.width_cm && t.height_cm
+                        ? `${t.length_cm} × ${t.width_cm} × ${t.height_cm}`
+                        : "—"}
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant={statusColor(t.status) as "default" | "secondary" | "destructive" | "outline"}>
+                        {t.status}
+                      </Badge>
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {trucks?.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={5} className="py-8 text-center text-muted-foreground">
+                      No trucks yet — add one above.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }
@@ -121,8 +187,9 @@ function TrucksContent() {
 export default function TrucksPage() {
   return (
     <RoleGuard role="logistics">
-      <Nav links={LINKS} />
-      <TrucksContent />
+      <DashboardLayout navItems={logisticsNav} title="Fleet Management">
+        <TrucksContent />
+      </DashboardLayout>
     </RoleGuard>
   );
 }

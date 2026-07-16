@@ -1,106 +1,85 @@
-# Agri-logistics POC — implementation plan
+# AgriLoad — Implementation Plan
 
-Prototype covering two account types (warehouse, logistics/truck owner), pickup requests, and route/load allocation, per the reviewed mockups and schema.
+## Stack
 
-## 1. Stack decision (read before starting)
+| Layer | Choice |
+|---|---|
+| Database | Firebase Firestore (NoSQL, with emulator for local dev) |
+| Backend | FastAPI + Pydantic v2 + OR-Tools + OSRM |
+| Frontend | Next.js 16 (App Router) + React 19 + Tailwind CSS 4 + Leaflet |
+| Auth | Custom JWT (PyJWT + bcrypt) |
+| Route Optimization | Google OR-Tools (Pickup & Delivery Problem) |
+| Distance/ETA | OSRM (OpenStreetMap Routing Machine) |
+| Space Optimization | Volume-based bin packing (custom) |
+| Map | Leaflet + OpenStreetMap (free, no API key) |
 
-| Layer | Choice | Why |
-|---|---|---|
-| Database | **Firebase SQL Connect** (managed PostgreSQL, Cloud SQL-backed) | Keeps the relational schema (FKs, joins) intact; satisfies "use Firebase" without forcing a NoSQL redesign |
-| Backend ORM | **SQLAlchemy + Alembic** (Python, in `backend/`) | Backend is the sole owner of schema migrations |
-| Frontend data access | **REST calls to FastAPI only** — no Prisma, no direct DB access from Next.js | Avoids two ORMs migrating the same database independently |
-| Auth | **Firebase Authentication**, custom claim `role: "warehouse" | "logistics"` | Shared identity across both services; FastAPI verifies the Firebase ID token on each request |
-| Frontend framework | Next.js (App Router), TypeScript, fetch/`use` for API calls | Already decided |
-| Backend framework | FastAPI, Pydantic v2 models mirroring the SQLAlchemy models | Already decided |
+## Features Implemented
 
-**If you'd rather keep Prisma in Next.js:** that only works cleanly if Next.js is also allowed to read the DB directly. In that case, make FastAPI the only service that runs migrations (`alembic upgrade head`), and run `prisma db pull` + `prisma generate` in the frontend to introspect the existing schema read-only — never `prisma migrate` from the frontend. Decide this before scaffolding; don't let both sides migrate.
+### Authentication
+- [x] Login / Register
+- [x] Role-based access (warehouse / logistics)
+- [x] JWT auth with Bearer tokens
 
-## 2. Repo structure
+### Warehouse
+- [x] Dashboard (request counts, recent requests, ETA)
+- [x] Create pickup request (date, arrival deadline, destination, items with dimensions/stackable/fragile)
+- [x] Request history with status tracking
+- [x] ETA visibility after optimization
 
-```
-frontend/                    # Next.js
-  app/
-    (warehouse)/
-      dashboard/page.tsx
-      requests/new/page.tsx
-      requests/page.tsx      # history/status list
-    (logistics)/
-      dashboard/page.tsx
-      routes/page.tsx
-      trucks/page.tsx
-    login/page.tsx
-  lib/
-    api.ts                   # thin fetch wrapper, attaches Firebase ID token
-    firebase-client.ts        # Firebase Auth client init only — no Firestore/DB client
-  types/
-    api.ts                   # hand-written or generated types matching backend Pydantic schemas
+### Logistics / Fleet Management
+- [x] Dashboard (pending requests, fleet size, available trucks, active trips, recent plans)
+- [x] Pickup request management (view all, filter by status/date)
+- [x] Fleet management (add trucks with type, plate, capacity, interior dimensions)
+- [x] Transportation plan generation (one-click: fleet allocation + route + space optimization)
+- [x] Space optimization (loading sequence, utilization bars, position notes)
+- [x] Route optimization (OR-Tools PDP, destination-aware, OSRM real distances)
+- [x] Transportation plan review (summary, routes, map, space allocation, loading sequence)
+- [x] Plan approval flow (optimized → approved)
+- [x] Route map visualization (Leaflet, pickup/dropoff markers, polyline)
+- [x] Fuel estimation + savings calculation
 
-backend/                     # FastAPI
-  app/
-    main.py
-    core/
-      config.py               # env vars, settings
-      auth.py                 # Firebase ID token verification middleware/dependency
-    db/
-      session.py              # SQLAlchemy engine/session
-      models.py                # SQLAlchemy models (mirrors schema.sql)
-    schemas/                  # Pydantic request/response models
-      warehouse.py
-      logistics.py
-      pickup_request.py
-      route.py
-    api/
-      warehouses.py
-      logistics.py
-      pickup_requests.py
-      routes.py
-    services/
-      optimizer.py            # route/load allocation logic — stub first, real algorithm later
-    alembic/
-      versions/
-  alembic.ini
-  requirements.txt
-```
+### Optimization Engine
+- [x] Pickup & Delivery Problem solver (OR-Tools)
+- [x] Destination-aware grouping (requests going same direction share a truck)
+- [x] OSRM real road distances + travel duration for ETA
+- [x] Best-fit decreasing fleet allocation (weight + volume)
+- [x] Priority scheduling (urgent deliveries first by required_arrival_date)
+- [x] Volume-based space optimization (stackable/fragile aware)
+- [x] Loading sequence generation (heavy → light → fragile on top)
+- [x] Fuel consumption estimation + savings vs naive individual delivery
 
-## 3. Database schema
+## API Endpoints
 
-Use `schema.sql` (already written) as the source of truth for the first Alembic migration. Translate each `CREATE TABLE` into a matching SQLAlchemy model in `db/models.py` — same table names, columns, and `CHECK` constraints. Don't hand-edit the schema in two places; if a column changes, change `models.py` and generate a new Alembic revision (`alembic revision --autogenerate`), not the other way around.
+### Auth
+- `POST /auth/register`
+- `POST /auth/login`
 
-## 4. API contract (first pass)
+### Warehouse
+- `POST /pickup-requests`
+- `GET /pickup-requests`
+- `GET /pickup-requests/{id}`
 
-Auth on every route below via `Authorization: Bearer <firebase-id-token>`; FastAPI dependency resolves it to a `user_id` and `role`.
+### Logistics
+- `GET /pickup-requests/all` (with status/date filters)
+- `GET /trucks`
+- `POST /trucks`
+- `POST /transportation-plans` (generate)
+- `GET /transportation-plans`
+- `GET /transportation-plans/{id}`
+- `POST /transportation-plans/{id}/approve`
+- `GET /routes?date=`
+- `PATCH /route-stops/{id}`
 
-**Warehouse-role routes**
-- `POST /pickup-requests` — body: `pickup_date`, `destination_name`, `destination_lat/lng`, `items: [{commodity_name, unit_type, quantity, estimated_weight_kg?}]`. Creates a `pickup_requests` row with `status = pending` plus its `request_items`.
-- `GET /pickup-requests` — list the calling warehouse's own requests, most recent first, with status.
-- `GET /pickup-requests/{id}` — detail view, including matched route if any.
+## Status Flow
 
-**Logistics-role routes**
-- `GET /trucks` — the calling company's trucks and current status.
-- `GET /routes?date=` — routes for that company on a given day, each with its ordered `route_stops`.
-- `POST /routes/generate` — triggers `services/optimizer.py` against all `pending` pickup requests for a date and this company's available trucks; creates `routes` + `route_stops`, sets matched requests to `status = matched`.
-- `PATCH /route-stops/{id}` — mark a stop `completed` (updates `eta`/actual arrival — add an `actual_arrival` column if you want real tracking here, it's not in the current schema).
+### Pickup Request
+`pending` → `optimized` (after plan generation) → `assigned` (after plan approval) → `in_transit` → `completed`
 
-**Shared**
-- `POST /auth/register` — creates the `users` row plus a `warehouses` or `logistics_companies` row depending on role, after Firebase Auth account creation on the client.
+### Transportation Plan
+`draft` → `optimized` → `approved` → `in_transit` → `completed`
 
-## 5. Optimizer — stub first
+### Route
+`planned` → `in_progress` → `completed`
 
-For the POC, `services/optimizer.py` does not need real routing/bin-packing on day one. Start with a naive version: group pending requests by destination, assign to the first available truck with enough remaining `capacity_weight_kg`, sequence stops by whatever order requests came in. This unblocks the frontend (routes/route_stops screens have real data to render) while the actual optimization logic is developed separately — swapping the function body later shouldn't require touching the API contract or the frontend at all.
-
-## 6. Milestones for Claude Code
-
-Work through these in order; each should be a working, demoable slice before moving to the next.
-
-1. **Scaffold + auth** — FastAPI health check route, Firebase Auth wired on both sides, `/auth/register` working, login page in Next.js.
-2. **Schema + migrations** — SQLAlchemy models from `schema.sql`, first Alembic migration applied to a real Firebase SQL Connect instance.
-3. **Warehouse flow** — `POST/GET /pickup-requests`, the "new pickup request" form and "your requests" table from the mockup, wired end to end.
-4. **Logistics flow (stub optimizer)** — `GET /trucks`, `POST /routes/generate` with the naive optimizer, `GET /routes`, the routes dashboard from the mockup wired end to end.
-5. **Polish + status transitions** — status badges reflecting real state (`pending` → `matched` → `in_progress` → `completed`), basic error states.
-6. **Real optimizer** — replace the naive grouping in `services/optimizer.py` with actual load/route optimization, no other layer should need to change.
-
-## 7. Open decisions to confirm before Claude Code starts
-
-- Confirm Firebase SQL Connect is available/acceptable for your GCP project and billing setup (it's a recently renamed, still-evolving product — check current docs at the time you set this up).
-- Confirm the Prisma-vs-REST-only decision from section 1.
-- Decide whether `route_stops.eta` should get an `actual_arrival` column now or later — affects whether "real-time tracking" is demoable in the POC or comes after.
+### Route Stop
+`pending` → `in_progress` → `completed`
