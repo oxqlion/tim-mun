@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import RoleGuard from "@/components/RoleGuard";
 import DashboardLayout, { logisticsNav } from "@/components/DashboardLayout";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,7 +24,9 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { api, ApiError } from "@/lib/api";
-import { Plus, Loader2 } from "lucide-react";
+import { 
+  Plus, Loader2, Truck, Hash, Scale, Ruler, Activity, CheckCircle, Wrench, Package 
+} from "lucide-react";
 import type { TruckOut, VehicleType } from "@/types/api";
 
 function TrucksContent() {
@@ -70,108 +72,180 @@ function TrucksContent() {
     }
   }
 
-  const statusColor = (s: string) => {
-    switch (s) {
-      case "available": return "default";
-      case "on_trip": return "secondary";
-      case "maintenance": return "destructive";
-      default: return "outline";
+  // Enhanced semantic status badges
+  const renderStatusBadge = (status: string) => {
+    switch (status) {
+      case "available":
+        return (
+          <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-400 capitalize">
+            <CheckCircle className="h-3 w-3 mr-1" /> Available
+          </Badge>
+        );
+      case "on_trip":
+        return (
+          <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/30 dark:text-blue-400 capitalize">
+            <Activity className="h-3 w-3 mr-1" /> Active Dispatch
+          </Badge>
+        );
+      case "maintenance":
+        return (
+          <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200 dark:bg-red-950/30 dark:text-red-400 capitalize">
+            <Wrench className="h-3 w-3 mr-1" /> Maintenance
+          </Badge>
+        );
+      default:
+        return <Badge variant="secondary" className="uppercase tracking-wider text-[10px]">{status}</Badge>;
     }
   };
 
+  const formatVehicleType = (type: string) => {
+    return type.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+  };
+
   return (
-    <div className="space-y-6">
-      {/* Add truck form */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Add Vehicle</CardTitle>
+    <div className="space-y-8 animate-in fade-in duration-500">
+      
+      {/* Registration Form */}
+      <Card className="border-none bg-muted/40 shadow-sm">
+        <CardHeader className="pb-4">
+          <CardTitle className="text-xl font-bold flex items-center gap-2">
+            <Truck className="h-5 w-5 text-primary" /> Register New Vehicle
+          </CardTitle>
+          <CardDescription>
+            Add a new transport vehicle to your active logistics fleet.
+          </CardDescription>
         </CardHeader>
-        <CardContent>
-          <form onSubmit={handleAddTruck} className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-            <div className="space-y-2">
-              <Label>Vehicle type</Label>
-              <Select value={vehicleType} onValueChange={(v) => setVehicleType(v as VehicleType)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="pickup">Pickup</SelectItem>
-                  <SelectItem value="truck_small">Truck (S)</SelectItem>
-                  <SelectItem value="truck_medium">Truck (M)</SelectItem>
-                  <SelectItem value="truck_large">Truck (L)</SelectItem>
-                </SelectContent>
-              </Select>
+        
+        <form onSubmit={handleAddTruck}>
+          <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            
+            {/* Left Column: Identification */}
+            <div className="space-y-4">
+              <h4 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-2 border-b pb-2">Vehicle Identification</h4>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Vehicle Category</Label>
+                  <Select value={vehicleType} onValueChange={(v) => setVehicleType(v as VehicleType)}>
+                    <SelectTrigger className="bg-background shadow-sm"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="pickup">Pickup Truck</SelectItem>
+                      <SelectItem value="truck_small">Small Box Truck</SelectItem>
+                      <SelectItem value="truck_medium">Medium Truck</SelectItem>
+                      <SelectItem value="truck_large">Heavy Duty Truck</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>License Plate <span className="text-destructive">*</span></Label>
+                  <Input required value={plate} onChange={(e) => setPlate(e.target.value)} placeholder="e.g. B 1234 XYZ" className="bg-background shadow-sm uppercase font-mono" />
+                </div>
+              </div>
             </div>
-            <div className="space-y-2">
-              <Label>Plate number *</Label>
-              <Input required value={plate} onChange={(e) => setPlate(e.target.value)} placeholder="B 1234 XYZ" />
+
+            {/* Right Column: Dimensions */}
+            <div className="space-y-4">
+              <h4 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-2 border-b pb-2">Cargo Capacity & Dimensions</h4>
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+                <div className="space-y-2 sm:col-span-4">
+                  <Label>Max Payload (kg) <span className="text-destructive">*</span></Label>
+                  <Input required type="number" min={0} value={capacity} onChange={(e) => setCapacity(e.target.value)} placeholder="e.g. 5000" className="bg-background shadow-sm" />
+                </div>
+                <div className="space-y-2 sm:col-span-1">
+                  <Label>Length (cm)</Label>
+                  <Input type="number" min={0} value={lengthCm} onChange={(e) => setLengthCm(e.target.value)} placeholder="L" className="bg-background shadow-sm" />
+                </div>
+                <div className="space-y-2 sm:col-span-1">
+                  <Label>Width (cm)</Label>
+                  <Input type="number" min={0} value={widthCm} onChange={(e) => setWidthCm(e.target.value)} placeholder="W" className="bg-background shadow-sm" />
+                </div>
+                <div className="space-y-2 sm:col-span-1">
+                  <Label>Height (cm)</Label>
+                  <Input type="number" min={0} value={heightCm} onChange={(e) => setHeightCm(e.target.value)} placeholder="H" className="bg-background shadow-sm" />
+                </div>
+              </div>
             </div>
-            <div className="space-y-2">
-              <Label>Max payload (kg) *</Label>
-              <Input required type="number" min={0} value={capacity} onChange={(e) => setCapacity(e.target.value)} />
-            </div>
-            <div />
-            <div className="space-y-2">
-              <Label>Interior L (cm)</Label>
-              <Input type="number" min={0} value={lengthCm} onChange={(e) => setLengthCm(e.target.value)} placeholder="400" />
-            </div>
-            <div className="space-y-2">
-              <Label>Interior W (cm)</Label>
-              <Input type="number" min={0} value={widthCm} onChange={(e) => setWidthCm(e.target.value)} placeholder="200" />
-            </div>
-            <div className="space-y-2">
-              <Label>Interior H (cm)</Label>
-              <Input type="number" min={0} value={heightCm} onChange={(e) => setHeightCm(e.target.value)} placeholder="200" />
-            </div>
-            <div className="flex items-end">
-              <Button type="submit" disabled={submitting} className="w-full">
-                {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
-                Add Truck
-              </Button>
-            </div>
-          </form>
-        </CardContent>
+
+          </CardContent>
+          <CardFooter className="bg-muted/50 border-t px-6 py-4 flex justify-end">
+            <Button type="submit" disabled={submitting} className="shadow-sm transition-all active:scale-95">
+              {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
+              Register Vehicle to Fleet
+            </Button>
+          </CardFooter>
+        </form>
       </Card>
 
-      {error && <p className="text-sm text-destructive">{error}</p>}
+      {error && (
+        <div className="rounded-md bg-destructive/15 p-3 text-sm text-destructive border border-destructive/30 flex items-center gap-2">
+          <div className="h-2 w-2 rounded-full bg-destructive animate-pulse" />
+          {error}
+        </div>
+      )}
 
       {/* Trucks table */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Fleet ({trucks?.length ?? 0})</CardTitle>
+      <Card className="shadow-sm">
+        <CardHeader className="border-b bg-muted/20 pb-4">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-lg font-bold">Active Fleet Registry</CardTitle>
+            <Badge variant="secondary" className="font-mono text-sm">
+              Total: {trucks?.length ?? 0}
+            </Badge>
+          </div>
         </CardHeader>
-        <CardContent>
-          <div className="rounded-md border">
+        <CardContent className="p-0">
+          <div className="overflow-x-auto">
             <Table>
               <TableHeader>
-                <TableRow>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Plate</TableHead>
-                  <TableHead>Payload (kg)</TableHead>
-                  <TableHead>Dimensions (cm)</TableHead>
-                  <TableHead>Status</TableHead>
+                <TableRow className="bg-muted/30">
+                  <TableHead className="font-semibold"><div className="flex items-center gap-2"><Truck className="h-4 w-4 text-muted-foreground" /> Vehicle Type</div></TableHead>
+                  <TableHead className="font-semibold"><div className="flex items-center gap-2"><Hash className="h-4 w-4 text-muted-foreground" /> Plate Number</div></TableHead>
+                  <TableHead className="font-semibold"><div className="flex items-center gap-2"><Scale className="h-4 w-4 text-muted-foreground" /> Max Payload</div></TableHead>
+                  <TableHead className="font-semibold"><div className="flex items-center gap-2"><Ruler className="h-4 w-4 text-muted-foreground" /> Cargo Dimensions</div></TableHead>
+                  <TableHead className="font-semibold">Operational Status</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {trucks?.map((t) => (
-                  <TableRow key={t.id}>
-                    <TableCell className="capitalize">{t.vehicle_type.replace("_", " ")}</TableCell>
-                    <TableCell className="font-mono text-sm">{t.plate_number}</TableCell>
-                    <TableCell>{t.capacity_weight_kg.toLocaleString()}</TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {t.length_cm && t.width_cm && t.height_cm
-                        ? `${t.length_cm} × ${t.width_cm} × ${t.height_cm}`
-                        : "—"}
+                  <TableRow key={t.id} className="hover:bg-accent/10 transition-colors">
+                    <TableCell className="font-medium text-foreground">
+                      {formatVehicleType(t.vehicle_type)}
                     </TableCell>
                     <TableCell>
-                      <Badge variant={statusColor(t.status) as "default" | "secondary" | "destructive" | "outline"}>
-                        {t.status}
+                      <Badge variant="outline" className="font-mono bg-background text-sm tracking-widest shadow-sm">
+                        {t.plate_number}
                       </Badge>
+                    </TableCell>
+                    <TableCell className="font-medium">
+                      {t.capacity_weight_kg.toLocaleString()} kg
+                    </TableCell>
+                    <TableCell className="text-muted-foreground text-sm">
+                      {t.length_cm && t.width_cm && t.height_cm ? (
+                        <span className="flex items-center gap-1.5 bg-muted/50 w-fit px-2 py-1 rounded-md">
+                          <Package className="h-3 w-3" />
+                          {t.length_cm} × {t.width_cm} × {t.height_cm} cm
+                        </span>
+                      ) : (
+                        <span className="italic text-muted-foreground/60">Not specified</span>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {renderStatusBadge(t.status)}
                     </TableCell>
                   </TableRow>
                 ))}
+                
                 {trucks?.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={5} className="py-8 text-center text-muted-foreground">
-                      No trucks yet — add one above.
+                    <TableCell colSpan={5} className="py-24">
+                      <div className="flex flex-col items-center justify-center text-center">
+                        <div className="h-16 w-16 rounded-full bg-muted flex items-center justify-center mb-4">
+                          <Truck className="h-8 w-8 text-muted-foreground" />
+                        </div>
+                        <h3 className="text-lg font-semibold text-foreground mb-1">No vehicles registered</h3>
+                        <p className="text-sm text-muted-foreground max-w-sm mb-6">
+                          Your fleet is currently empty. Use the registration form above to add your first transport vehicle.
+                        </p>
+                      </div>
                     </TableCell>
                   </TableRow>
                 )}
@@ -187,7 +261,7 @@ function TrucksContent() {
 export default function TrucksPage() {
   return (
     <RoleGuard role="logistics">
-      <DashboardLayout navItems={logisticsNav} title="Fleet Management">
+      <DashboardLayout navItems={logisticsNav} title="Fleet & Assets Management">
         <TrucksContent />
       </DashboardLayout>
     </RoleGuard>
