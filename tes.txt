@@ -1,0 +1,325 @@
+# Feature Prompt: Add Space Optimization UI to the Existing Plan Page
+
+## Objective
+
+Add a new **Space Optimization** section inside the existing **Plan** page.
+
+Do **not** replace or modify the existing Route Optimization implementation.
+
+This task focuses **only on building the user interface** for Space Optimization. The optimization algorithm can be integrated later. The UI should be designed to display optimization results returned by a future space optimization engine.
+
+The Space Optimization section should consume the same Transportation Plan data that is already used by the Route Optimization module.
+
+---
+
+# Data Source
+
+The Space Optimization section should automatically use data from the generated Transportation Plan.
+
+Do **not** request additional user input.
+
+Retrieve:
+
+## Truck Information
+
+- Truck Type
+- Truck Length
+- Truck Width
+- Truck Height
+- Maximum Payload
+- Current Payload
+
+---
+
+## Commodity Information
+
+Each commodity contains:
+
+- Commodity Name
+- Quantity
+- Length
+- Width
+- Height
+- Weight
+- Stackable
+- Fragile
+
+---
+
+# Placement
+
+Add the Space Optimization section inside the existing **Plan** page.
+
+Layout order:
+
+```text
+Transportation Plan
+
+↓
+
+Fleet Allocation
+
+↓
+
+Space Optimization
+
+↓
+
+Route Optimization
+
+↓
+
+Approve Transportation Plan
+```
+
+Do not create a separate page.
+
+---
+
+# Space Optimization UI
+
+The section should be split into multiple cards.
+
+## 1. Truck Information
+
+Display:
+
+- Truck Type
+- Plate Number
+- Truck Dimensions
+- Maximum Payload
+- Current Payload
+
+---
+
+## 2. Truck Visualization
+
+Reserve a large area for the truck visualization.
+
+Initially this can display:
+
+- Empty truck placeholder
+- Mock boxes
+- Future optimization result
+
+The component should be ready to display:
+
+- Truck floor
+- Truck walls
+- Commodity boxes
+
+Support:
+
+- Rotate
+- Zoom
+- Pan
+
+---
+
+## 3. Optimization Statistics
+
+Display the following KPI cards:
+
+- Space Utilization
+- Weight Utilization
+- Remaining Capacity
+- Remaining Volume
+- Loaded Items
+- Unloaded Items
+
+Use progress bars where appropriate.
+
+---
+
+## 4. Weight Distribution
+
+Display:
+
+- Front Weight
+- Rear Weight
+- Left Weight
+- Right Weight
+
+Visualize using progress bars or charts.
+
+Display a warning state if the distribution becomes unbalanced.
+
+---
+
+## 5. Loading Sequence
+
+Display the recommended loading order.
+
+Example layout:
+
+```text
+1. Rice
+
+Rear Left
+
+↓
+
+2. Tomatoes
+
+Middle
+
+↓
+
+3. Potatoes
+
+Front Right
+```
+
+This section should support dynamic data later.
+
+---
+
+## 6. Commodity Placement Table
+
+Display every placed commodity.
+
+Columns:
+
+- Commodity
+- Position (X, Y, Z)
+- Rotation
+- Stack Level
+- Weight
+
+The table should support:
+
+- Search
+- Sorting
+- Pagination
+
+---
+
+# Empty State
+
+Before the user generates a transportation plan, display a friendly placeholder.
+
+Example:
+
+```text
+No Space Optimization Available
+
+Generate a transportation plan to view the truck loading arrangement.
+```
+
+---
+
+# Loading State
+
+While optimization data is being generated, display:
+
+- Skeleton cards
+- Skeleton visualization
+- Loading indicator
+
+---
+
+# Responsive Design
+
+Desktop:
+
+- Large truck visualization
+- Statistics beside or below visualization
+- Full-width placement table
+
+Tablet:
+
+- Stack cards vertically
+
+Mobile:
+
+- Single-column layout
+- Responsive visualization
+- Horizontally scrollable table
+
+---
+
+# Styling
+
+Match the existing application design.
+
+Use:
+
+- shadcn/ui Cards
+- Progress Bars
+- Badges
+- Tables
+- Tooltips
+- Scroll Areas
+
+Use Lucide icons where appropriate.
+
+Maintain the same spacing, typography, and card design as the existing Plan page.
+
+---
+
+# Component Structure
+
+Create reusable components.
+
+```text
+components/
+└── space-optimization/
+    ├── TruckInformationCard.tsx
+    ├── TruckVisualization.tsx
+    ├── OptimizationStatistics.tsx
+    ├── WeightDistribution.tsx
+    ├── LoadingSequence.tsx
+    ├── CommodityPlacementTable.tsx
+    └── EmptyState.tsx
+```
+
+The existing Plan page should simply compose these components.
+
+---
+
+# Future Integration
+
+Design the UI so it can later consume the output of the Space Optimization engine.
+
+The UI should expect a result object similar to:
+
+```typescript
+{
+  placedBoxes: [],
+  unloadedBoxes: [],
+  metrics: {
+    spaceUtilization: number,
+    weightUtilization: number,
+    remainingWeight: number,
+    remainingVolume: number,
+    loadedItems: number,
+    unloadedItems: number
+  },
+  weightDistribution: {
+    front: number,
+    rear: number,
+    left: number,
+    right: number
+  },
+  loadingSequence: []
+}
+```
+
+The UI should only display this data and should not contain any optimization logic.
+
+---
+
+# Expected Result
+
+The Plan page should now include a professional **Space Optimization** section positioned between Fleet Allocation and Route Optimization.
+
+The section should display:
+
+- Truck Information
+- Large Truck Visualization area
+- Optimization Statistics
+- Weight Distribution
+- Loading Sequence
+- Commodity Placement Table
+
+The UI should be fully responsive, reusable, and visually consistent with the rest of the application, while being ready to integrate with the future truck space optimization algorithm without requiring major UI changes.

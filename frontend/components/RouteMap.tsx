@@ -129,5 +129,5 @@ export default function RouteMap({ route }: RouteMapProps) {
     );
   }
 
-  return <div id={mapId} className="h-64 w-full rounded-md border border-black/10" />;
+  return <div id={mapId} className="h-96 w-full rounded-md border border-black/10" />;
 }

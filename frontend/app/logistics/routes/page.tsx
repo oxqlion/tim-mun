@@ -77,11 +77,20 @@ function RoutesContent() {
       {routes?.map((route) => (
         <Card key={route.id}>
           <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle className="text-sm">Truck {route.truck_id.slice(0, 8)}…</CardTitle>
+            <div>
+              <CardTitle className="text-sm">
+                {route.truck_plate_number ?? `Truck ${route.truck_id.slice(0, 8)}…`}
+              </CardTitle>
+              <p className="text-xs text-muted-foreground">
+                {route.truck_vehicle_type && `${route.truck_vehicle_type.replace("_", " ")} · `}
+                {route.stops.length} stops
+                {route.total_distance_km && ` · ${route.total_distance_km} km`}
+              </p>
+            </div>
             <Badge variant="secondary">{route.status}</Badge>
           </CardHeader>
           <CardContent className="space-y-4">
-            <Suspense fallback={<div className="h-64 animate-pulse rounded-md bg-muted" />}>
+            <Suspense fallback={<div className="h-96 animate-pulse rounded-md bg-muted" />}>
               <RouteMap route={route} />
             </Suspense>
 
@@ -90,10 +99,13 @@ function RoutesContent() {
                 <div key={stop.id} className="flex items-center justify-between rounded-md border px-3 py-2">
                   <div className="flex items-center gap-3">
                     <span className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold text-white ${stop.stop_type === "pickup" ? "bg-blue-600" : "bg-red-500"}`}>
-                      {stop.stop_type === "pickup" ? "P" : "D"}
+                      {stop.stop_sequence}
                     </span>
                     <div>
-                      <p className="text-sm font-medium">#{stop.stop_sequence} · {stop.stop_type}</p>
+                      <p className="text-sm font-medium">
+                        {stop.stop_type === "pickup" ? "📦 Pickup" : "📍 Dropoff"}
+                        {stop.location_name && ` — ${stop.location_name}`}
+                      </p>
                       <p className="text-xs text-muted-foreground">
                         {stop.allocated_weight_kg && `${stop.allocated_weight_kg} kg`}
                         {stop.eta && ` · ETA ${new Date(stop.eta).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}`}

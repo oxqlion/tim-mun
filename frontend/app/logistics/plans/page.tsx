@@ -8,17 +8,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { api, ApiError } from "@/lib/api";
 import { Fuel, MapPin, Package, Truck, CheckCircle, Loader2 } from "lucide-react";
-import type { TransportationPlanOut } from "@/types/api";
+import type { TransportationPlanOut, TruckOut } from "@/types/api";
+import SpaceOptimizationSection from "@/components/space-optimization/SpaceOptimizationSection";
 
 const RouteMap = lazy(() => import("@/components/RouteMap"));
 
@@ -29,16 +22,22 @@ function todayIso() {
 function PlansContent() {
   const [date, setDate] = useState(todayIso());
   const [plan, setPlan] = useState<TransportationPlanOut | null>(null);
+  const [trucks, setTrucks] = useState<TruckOut[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
   const [approving, setApproving] = useState(false);
 
   const loadPlans = useCallback(() => {
+    api.get<TruckOut[]>("/trucks").then(setTrucks).catch(() => {});
     api
       .get<TransportationPlanOut[]>("/transportation-plans")
       .then((plans) => {
         const match = plans.find((p) => p.plan_date === date);
-        setPlan(match ?? null);
+        if (match) {
+          api.get<TransportationPlanOut>(`/transportation-plans/${match.id}`).then(setPlan);
+        } else {
+          setPlan(null);
+        }
       })
       .catch(() => setError("Failed to load plans"));
   }, [date]);
@@ -229,8 +228,14 @@ function PlansContent() {
                   </div>
                 )}
 
+                {/* Space Optimization */}
+                <SpaceOptimizationSection
+                  route={route}
+                  truck={trucks.find((t) => t.id === route.truck_id)}
+                />
+
                 {/* Map */}
-                <Suspense fallback={<div className="h-64 animate-pulse rounded-md bg-muted" />}>
+                <Suspense fallback={<div className="h-96 animate-pulse rounded-md bg-muted" />}>
                   <RouteMap route={route} />
                 </Suspense>
 
@@ -268,36 +273,6 @@ function PlansContent() {
                   </div>
                 </div>
 
-                {/* Loading Sequence */}
-                {route.space_allocations.length > 0 && (
-                  <div>
-                    <p className="mb-2 text-sm font-medium">Loading Sequence</p>
-                    <div className="rounded-md border">
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead className="w-12">#</TableHead>
-                            <TableHead>Commodity</TableHead>
-                            <TableHead>Weight</TableHead>
-                            <TableHead>Volume</TableHead>
-                            <TableHead>Position</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {route.space_allocations.map((alloc) => (
-                            <TableRow key={alloc.id}>
-                              <TableCell className="font-mono">{alloc.loading_sequence}</TableCell>
-                              <TableCell>{alloc.commodity_name}</TableCell>
-                              <TableCell>{alloc.weight_kg} kg</TableCell>
-                              <TableCell>{alloc.volume_m3.toFixed(3)} m³</TableCell>
-                              <TableCell className="text-xs text-muted-foreground">{alloc.position_notes}</TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    </div>
-                  </div>
-                )}
               </CardContent>
             </Card>
           ))}
