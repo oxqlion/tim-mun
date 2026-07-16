@@ -16,6 +16,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { api, ApiError } from "@/lib/api";
+import { formatEtaWIB } from "@/lib/format";
 import { Loader2 } from "lucide-react";
 import type { RouteOut, StopStatus } from "@/types/api";
 
@@ -108,7 +109,7 @@ function RoutesContent() {
                       </p>
                       <p className="text-xs text-muted-foreground">
                         {stop.allocated_weight_kg && `${stop.allocated_weight_kg} kg`}
-                        {stop.eta && ` · ETA ${new Date(stop.eta).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}`}
+                        {stop.eta && ` · ETA ${formatEtaWIB(stop.eta)}`}
                       </p>
                     </div>
                   </div>

@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api, ApiError } from "@/lib/api";
+import { formatEtaWIB } from "@/lib/format";
 import { Fuel, MapPin, Package, Truck, CheckCircle, Loader2 } from "lucide-react";
 import type { TransportationPlanOut, TruckOut } from "@/types/api";
 import SpaceOptimizationSection from "@/components/space-optimization/SpaceOptimizationSection";
@@ -263,7 +264,7 @@ function PlansContent() {
                             </p>
                             <p className="text-xs text-muted-foreground">
                               {stop.allocated_weight_kg && `${stop.allocated_weight_kg} kg`}
-                              {stop.eta && ` · ETA ${new Date(stop.eta).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}`}
+                              {stop.eta && ` · ETA ${formatEtaWIB(stop.eta)}`}
                             </p>
                           </div>
                         </div>

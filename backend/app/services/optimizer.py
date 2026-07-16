@@ -36,12 +36,13 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 EARTH_RADIUS_KM = 6371.0
-AVG_SPEED_KMH = 40.0
-LOADING_TIME_MINUTES = 30
+AVG_SPEED_KMH = 35.0
+LOADING_TIME_MINUTES = 60
 START_HOUR = 8
 OSRM_BASE_URL = "http://router.project-osrm.org"
 OSRM_TIMEOUT_SECONDS = 10
 FUEL_CONSUMPTION_L_PER_KM = 0.15
+WIB = timezone(timedelta(hours=7))  # UTC+7
 
 
 # ---------------------------------------------------------------------------
@@ -264,22 +265,29 @@ def _calculate_eta_for_route(
 ) -> dict[str, datetime]:
     """Calculate ETA at dropoff for each request."""
     year, month, day = map(int, date_iso.split("-"))
-    departure = datetime(year, month, day, START_HOUR, 0, 0, tzinfo=timezone.utc)
+    departure = datetime(year, month, day, START_HOUR, 0, 0, tzinfo=WIB)
     eta_map: dict[str, datetime] = {}
     current_time = departure
     prev_node = 0
+    is_first_stop = True
 
     for node_idx in route_nodes:
-        if duration_matrix is not None:
-            current_time += timedelta(seconds=duration_matrix[prev_node][node_idx])
-        else:
-            loc = locations[node_idx]
-            prev_loc = locations[prev_node]
-            km = _haversine(prev_loc[0], prev_loc[1], loc[0], loc[1])
-            current_time += timedelta(hours=km / AVG_SPEED_KMH)
+        # Skip travel time from depot to first stop (truck starts at first stop)
+        if not is_first_stop:
+            if duration_matrix is not None:
+                current_time += timedelta(seconds=duration_matrix[prev_node][node_idx])
+            else:
+                loc = locations[node_idx]
+                prev_loc = locations[prev_node]
+                km = _haversine(prev_loc[0], prev_loc[1], loc[0], loc[1])
+                current_time += timedelta(hours=km / AVG_SPEED_KMH)
+        is_first_stop = False
 
         info = node_info.get(node_idx, {})
         if info.get("type") == "pickup":
+            doc_id = info.get("doc_id")
+            if doc_id:
+                eta_map[f"pickup_{doc_id}"] = current_time
             current_time += timedelta(minutes=LOADING_TIME_MINUTES)
         if info.get("type") == "dropoff":
             doc_id = info.get("doc_id")
@@ -569,7 +577,7 @@ def generate_transportation_plan(db: Client, company_id: str, date_iso: str) -> 
                         "stop_type": info["type"],
                         "lat": locations[node_idx][0],
                         "lng": locations[node_idx][1],
-                        "eta": eta_map.get(req["doc_id"]) if info["type"] == "dropoff" else None,
+                        "eta": eta_map.get(req["doc_id"]) if info["type"] == "dropoff" else eta_map.get(f"pickup_{req['doc_id']}"),
                         "allocated_weight_kg": req["weight"],
                         "allocated_volume_m3": None,
                         "status": "pending",

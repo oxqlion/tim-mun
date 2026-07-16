@@ -6,7 +6,6 @@ import RoleGuard from "@/components/RoleGuard";
 import DashboardLayout, { logisticsNav } from "@/components/DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import { Truck, Package, MapPin, Fuel } from "lucide-react";
 import type { TruckOut, TransportationPlanSummary, PickupRequestOut } from "@/types/api";
@@ -80,9 +79,9 @@ function DashboardContent() {
       {/* Quick action */}
       <div className="flex items-center justify-between">
         <h2 className="text-base font-semibold">Recent Plans</h2>
-        <Button asChild>
-          <Link href="/logistics/plans">Generate New Plan</Link>
-        </Button>
+        <Link href="/logistics/plans" className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary px-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/80">
+          Generate New Plan
+        </Link>
       </div>
 
       {/* Plans list */}

@@ -6,7 +6,6 @@ import RoleGuard from "@/components/RoleGuard";
 import DashboardLayout, { warehouseNav } from "@/components/DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import {
   Table,
   TableBody,
@@ -16,6 +15,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { api } from "@/lib/api";
+import { formatEtaWIB } from "@/lib/format";
 import { PackagePlus, Clock, CheckCircle, Truck, Ban } from "lucide-react";
 import type { PickupRequestOut } from "@/types/api";
 
@@ -61,12 +61,10 @@ function DashboardContent() {
       {/* Quick action */}
       <div className="flex items-center justify-between">
         <h2 className="text-base font-semibold">Recent Requests</h2>
-        <Button asChild>
-          <Link href="/warehouse/requests/new">
-            <PackagePlus className="mr-2 h-4 w-4" />
-            New Request
-          </Link>
-        </Button>
+        <Link href="/warehouse/requests/new" className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary px-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/80">
+          <PackagePlus className="mr-2 h-4 w-4" />
+          New Request
+        </Link>
       </div>
 
       {/* Recent requests table */}
@@ -87,9 +85,7 @@ function DashboardContent() {
                   <TableCell className="font-medium">{r.destination_name}</TableCell>
                   <TableCell>{r.pickup_date}</TableCell>
                   <TableCell className="text-muted-foreground">
-                    {r.estimated_arrival
-                      ? new Date(r.estimated_arrival).toLocaleString("id-ID", { hour: "2-digit", minute: "2-digit", day: "numeric", month: "short" })
-                      : "—"}
+                    {formatEtaWIB(r.estimated_arrival)}
                   </TableCell>
                   <TableCell>
                     <Badge variant="secondary">{r.status}</Badge>

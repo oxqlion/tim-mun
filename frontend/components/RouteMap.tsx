@@ -54,10 +54,24 @@ export default function RouteMap({ route }: RouteMapProps) {
 
       // Add markers and build polyline
       const latLngs: [number, number][] = [];
+      const seenCoords = new Map<string, number>(); // track duplicate positions
 
       for (const stop of stopsWithCoords) {
-        const lat = stop.lat!;
-        const lng = stop.lng!;
+        let lat = stop.lat!;
+        let lng = stop.lng!;
+
+        // Offset overlapping markers
+        const key = `${lat.toFixed(4)},${lng.toFixed(4)}`;
+        const count = seenCoords.get(key) || 0;
+        seenCoords.set(key, count + 1);
+        if (count > 0) {
+          // Spiral offset for duplicates
+          const angle = count * 1.2;
+          const offset = 0.003 * count;
+          lat += Math.cos(angle) * offset;
+          lng += Math.sin(angle) * offset;
+        }
+
         latLngs.push([lat, lng]);
 
         const isPickup = stop.stop_type === "pickup";

@@ -14,6 +14,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { api } from "@/lib/api";
+import { formatEtaWIB } from "@/lib/format";
 import type { PickupRequestOut } from "@/types/api";
 
 function RequestsList() {
@@ -51,9 +52,7 @@ function RequestsList() {
                     {r.items.map((it) => `${it.quantity} ${it.unit_type} ${it.commodity_name}`).join(", ")}
                   </TableCell>
                   <TableCell className="text-muted-foreground">
-                    {r.estimated_arrival
-                      ? new Date(r.estimated_arrival).toLocaleString("id-ID", { hour: "2-digit", minute: "2-digit", day: "numeric", month: "short" })
-                      : "—"}
+                    {formatEtaWIB(r.estimated_arrival)}
                   </TableCell>
                   <TableCell>
                     <Badge variant="secondary">{r.status}</Badge>
