@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, status
@@ -7,6 +8,8 @@ from app.core.auth import create_access_token
 from app.core.security import hash_password, verify_password
 from app.db.firestore import get_db
 from app.schemas.auth import LoginRequest, RegisterRequest, TokenResponse
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -22,56 +25,74 @@ def _find_user_by_email(db: Client, email: str) -> dict | None:
 
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
 def register(body: RegisterRequest):
-    db = get_db()
+    try:
+        db = get_db()
 
-    if _find_user_by_email(db, body.email):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered")
+        if _find_user_by_email(db, body.email):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered")
 
-    if body.role == "warehouse" and body.warehouse is None:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="warehouse profile is required for role=warehouse")
-    if body.role == "logistics" and body.logistics is None:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="logistics profile is required for role=logistics")
+        if body.role == "warehouse" and body.warehouse is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="warehouse profile is required for role=warehouse")
+        if body.role == "logistics" and body.logistics is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="logistics profile is required for role=logistics")
 
-    user_ref = db.collection("users").document()
-    user_ref.set(
-        {
-            "name": body.name,
-            "role": body.role,
-            "phone": body.phone,
-            "email": body.email,
-            "password_hash": hash_password(body.password),
-            "created_at": datetime.now(timezone.utc),
-        }
-    )
-
-    if body.role == "warehouse":
-        db.collection("warehouses").document().set(
+        user_ref = db.collection("users").document()
+        user_ref.set(
             {
-                "user_id": user_ref.id,
-                "name": body.warehouse.name,
-                "address": body.warehouse.address,
-                "lat": body.warehouse.lat,
-                "lng": body.warehouse.lng,
-            }
-        )
-    else:
-        db.collection("logistics_companies").document().set(
-            {
-                "user_id": user_ref.id,
-                "name": body.logistics.name,
+                "name": body.name,
+                "role": body.role,
+                "phone": body.phone,
+                "email": body.email,
+                "password_hash": hash_password(body.password),
+                "created_at": datetime.now(timezone.utc),
             }
         )
 
-    token = create_access_token(user_id=user_ref.id, role=body.role)
-    return TokenResponse(access_token=token, role=body.role, user_id=user_ref.id)
+        if body.role == "warehouse":
+            db.collection("warehouses").document().set(
+                {
+                    "user_id": user_ref.id,
+                    "name": body.warehouse.name,
+                    "address": body.warehouse.address,
+                    "lat": body.warehouse.lat,
+                    "lng": body.warehouse.lng,
+                }
+            )
+        else:
+            db.collection("logistics_companies").document().set(
+                {
+                    "user_id": user_ref.id,
+                    "name": body.logistics.name,
+                }
+            )
+
+        token = create_access_token(user_id=user_ref.id, role=body.role)
+        return TokenResponse(access_token=token, role=body.role, user_id=user_ref.id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Unexpected error during registration for email=%s", body.email)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Registration failed: {exc}",
+        ) from exc
 
 
 @router.post("/login", response_model=TokenResponse)
 def login(body: LoginRequest):
-    db = get_db()
-    user = _find_user_by_email(db, body.email)
-    if not user or not verify_password(body.password, user["password_hash"]):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
+    try:
+        db = get_db()
+        user = _find_user_by_email(db, body.email)
+        if not user or not verify_password(body.password, user["password_hash"]):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
 
-    token = create_access_token(user_id=user["id"], role=user["role"])
-    return TokenResponse(access_token=token, role=user["role"], user_id=user["id"])
+        token = create_access_token(user_id=user["id"], role=user["role"])
+        return TokenResponse(access_token=token, role=user["role"], user_id=user["id"])
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Unexpected error during login for email=%s", body.email)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Login failed: {exc}",
+        ) from exc
