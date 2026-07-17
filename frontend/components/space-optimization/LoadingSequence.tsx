@@ -1,6 +1,8 @@
 "use client";
 
-import type { SpaceAllocationOut } from "@/types/api";
+import { useMemo } from "react";
+import { buildDropoffRankToStopSequence } from "@/lib/loadingState";
+import type { RouteStopOut, SpaceAllocationOut } from "@/types/api";
 
 const COLORS = [
   "#3b82f6", "#ef4444", "#10b981", "#f59e0b", "#8b5cf6",
@@ -9,9 +11,12 @@ const COLORS = [
 
 interface LoadingSequenceProps {
   allocations: SpaceAllocationOut[];
+  stops: RouteStopOut[];
 }
 
-export default function LoadingSequence({ allocations }: LoadingSequenceProps) {
+export default function LoadingSequence({ allocations, stops }: LoadingSequenceProps) {
+  const dropoffRankToSeq = useMemo(() => buildDropoffRankToStopSequence(stops), [stops]);
+
   return (
     <div className="space-y-2">
       <p className="text-sm font-medium">Loading Sequence</p>
@@ -34,7 +39,7 @@ export default function LoadingSequence({ allocations }: LoadingSequenceProps) {
                 <p className="text-xs text-muted-foreground">{alloc.position_notes}</p>
                 {alloc.dropoff_order != null && (
                   <p className="text-xs text-muted-foreground">
-                    → Stop {alloc.dropoff_order}
+                    → Stop {dropoffRankToSeq.get(alloc.dropoff_order) ?? alloc.dropoff_order}
                     {alloc.dropoff_location_name ? `: ${alloc.dropoff_location_name}` : ""}
                   </p>
                 )}
