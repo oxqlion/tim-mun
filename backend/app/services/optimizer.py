@@ -139,17 +139,23 @@ def _weight_for_request(db: Client, request_id: str) -> float:
 
 
 def _volume_for_request(db: Client, request_id: str) -> float:
-    """Total volume (m³) for a request."""
+    """Total volume (m³) for a request.
+
+    Falls back to a 50cm default per missing dimension — the same default
+    _run_space_optimization uses when packing — so the OR-Tools volume
+    capacity constraint below doesn't undercount items with unknown
+    dimensions as zero-volume and let the solver over-pack a truck relative
+    to what the space optimizer can actually fit.
+    """
     items = db.collection("request_items").where("pickup_request_id", "==", request_id).stream()
     total = 0.0
     for doc in items:
         item = doc.to_dict()
-        l = item.get("length_cm") or 0
-        w = item.get("width_cm") or 0
-        h = item.get("height_cm") or 0
+        l = item.get("length_cm") or 50
+        w = item.get("width_cm") or 50
+        h = item.get("height_cm") or 50
         qty = item.get("quantity", 1)
-        if l > 0 and w > 0 and h > 0:
-            total += (l * w * h * qty) / 1_000_000
+        total += (l * w * h * qty) / 1_000_000
     return total
 
 
@@ -167,7 +173,7 @@ def _solve_multi_vehicle_pdp(
     vehicle_volume_capacities: list[int],
     num_vehicles: int,
     logs: list[str],
-) -> Optional[list[list[int]]]:
+) -> Optional[list[tuple[int, list[int]]]]:
     """Solve multi-vehicle Pickup & Delivery Problem.
 
     OR-Tools decides BOTH truck assignment AND routing simultaneously.
@@ -239,22 +245,29 @@ def _solve_multi_vehicle_pdp(
     logs.append(f"    ✓ Optimal solution found!")
     logs.append(f"    Objective (total distance): {solution.ObjectiveValue() / 1000:.2f} km")
 
-    routes: list[list[int]] = []
+    # Pair each route with its OR-Tools vehicle_id rather than just appending
+    # to a list — vehicles with an empty route are skipped below, so the
+    # position in a plain list no longer lines up with vehicle_id once any
+    # earlier-indexed vehicle goes unused. Losing that correspondence caused
+    # the caller to zip a route computed (and capacity-checked) for one
+    # vehicle onto a different truck's document — reporting/packing against
+    # the wrong truck's capacity and making it look "overloaded".
+    routes: list[tuple[int, list[int]]] = []
     for vehicle_id in range(num_vehicles):
         route: list[int] = []
         index = routing.Start(vehicle_id)
-        
+
         # Include the Start depot, all stops, and End depot
         while not routing.IsEnd(index):
             node = manager.IndexToNode(index)
             route.append(node)
             index = solution.Value(routing.NextVar(index))
         route.append(manager.IndexToNode(index)) # Append final depot node
-        
-        # Only process routes that have actual pickups/deliveries assigned 
+
+        # Only process routes that have actual pickups/deliveries assigned
         # (len > 2 means it's not just [Depot, Depot])
         if len(route) > 2:
-            routes.append(route)
+            routes.append((vehicle_id, route))
 
     return routes
 
@@ -370,6 +383,149 @@ def _run_space_optimization(
                 dropoff_location_name=dropoff_names.get(req_id),
             ))
     return optimize_space(items, truck)
+
+
+# ---------------------------------------------------------------------------
+# Fallback assignment (no coordinates, or the PDP solver couldn't route them)
+# ---------------------------------------------------------------------------
+
+
+def _assign_fallback_requests(
+    db: Client,
+    plan_ref,
+    date_iso: str,
+    requests: list[dict],
+    available_trucks: list,
+    truck_assignments: dict[str, list],
+    created_route_ids: list[str],
+    logs: list[str],
+) -> None:
+    """Greedily bin-pack leftover requests across all still-unused trucks.
+
+    Used both for requests missing coordinates (can't be routed by the PDP
+    solver) and for requests the solver failed to route at all. Fills one
+    truck up to its weight AND volume capacity, then moves overflow to the
+    next unused truck instead of cramming everything onto a single truck and
+    letting it run over capacity. Requests that don't fit anywhere are left
+    pending and logged rather than silently overloading the last truck.
+    """
+    remaining = list(requests)
+
+    for truck_doc in available_trucks:
+        if not remaining:
+            break
+
+        td = truck_doc.to_dict()
+        cap_weight = td["capacity_weight_kg"]
+        l, w, h = td.get("length_cm") or 0, td.get("width_cm") or 0, td.get("height_cm") or 0
+        cap_volume = (l * w * h) / 1_000_000 if l > 0 and w > 0 and h > 0 else None
+
+        chosen: list[dict] = []
+        still_remaining: list[dict] = []
+        used_weight = 0.0
+        used_volume = 0.0
+
+        for req in remaining:
+            req_weight = req["weight"]
+            req_volume = req.get("volume") or 0
+            fits_weight = used_weight + req_weight <= cap_weight
+            fits_volume = cap_volume is None or used_volume + req_volume <= cap_volume
+            if fits_weight and fits_volume:
+                chosen.append(req)
+                used_weight += req_weight
+                used_volume += req_volume
+            else:
+                still_remaining.append(req)
+
+        remaining = still_remaining
+        if not chosen:
+            continue
+
+        truck_id = truck_doc.id
+        truck_assignments[truck_id] = chosen
+        logs.append(
+            f"    Fallback truck {td.get('plate_number', truck_id[:8])} "
+            f"({cap_weight:.0f} kg cap): {len(chosen)} requests, {used_weight:.0f} kg"
+        )
+
+        # No cross-request route optimization here (that's the PDP solver's
+        # job) — just a stable per-request delivery rank so the space
+        # optimizer still packs LIFO in a sane, deterministic order.
+        dropoff_seq = {req["doc_id"]: i + 1 for i, req in enumerate(chosen)}
+        dropoff_names = {req["doc_id"]: req["destination_name"] for req in chosen}
+
+        route_ref = db.collection("routes").document()
+        route_ref.set({
+            "transportation_plan_id": plan_ref.id,
+            "truck_id": truck_id,
+            "route_date": date_iso,
+            "status": "planned",
+            "total_distance_km": None,
+            "space_utilization_percent": None,
+            "weight_utilization_percent": None,
+            "generated_at": datetime.now(timezone.utc),
+        })
+        created_route_ids.append(route_ref.id)
+
+        seq = 1
+        for req in chosen:
+            db.collection("route_stops").document().set({
+                "route_id": route_ref.id,
+                "pickup_request_id": req["doc_id"],
+                "stop_sequence": seq,
+                "stop_type": "pickup",
+                "lat": req.get("pickup_lat"),
+                "lng": req.get("pickup_lng"),
+                "eta": None,
+                "allocated_weight_kg": req["weight"],
+                "allocated_volume_m3": req.get("volume"),
+                "status": "pending",
+            })
+            seq += 1
+            if req.get("delivery_lat") and req.get("delivery_lng"):
+                db.collection("route_stops").document().set({
+                    "route_id": route_ref.id,
+                    "pickup_request_id": req["doc_id"],
+                    "stop_sequence": seq,
+                    "stop_type": "dropoff",
+                    "lat": req["delivery_lat"],
+                    "lng": req["delivery_lng"],
+                    "eta": None,
+                    "allocated_weight_kg": req["weight"],
+                    "allocated_volume_m3": req.get("volume"),
+                    "status": "pending",
+                })
+                seq += 1
+            db.collection("pickup_requests").document(req["doc_id"]).update({"status": "optimized"})
+
+        space_result = _run_space_optimization(
+            db, truck_id, [r["doc_id"] for r in chosen], dropoff_seq, dropoff_names
+        )
+        route_ref.update({
+            "space_utilization_percent": space_result.space_utilization_percent,
+            "weight_utilization_percent": space_result.weight_utilization_percent,
+        })
+        for loaded in space_result.loaded_items:
+            db.collection("space_allocations").document().set({
+                "route_id": route_ref.id,
+                "pickup_request_id": loaded.pickup_request_id,
+                "item_id": loaded.item_id,
+                "commodity_name": loaded.commodity_name,
+                "loading_sequence": loaded.loading_sequence,
+                "position_notes": loaded.position_notes,
+                "weight_kg": loaded.weight_kg,
+                "volume_m3": loaded.volume_m3,
+                "quantity": loaded.quantity,
+                "dropoff_order": loaded.dropoff_order,
+                "dropoff_location_name": loaded.dropoff_location_name,
+            })
+
+        db.collection("trucks").document(truck_id).update({"status": "on_trip"})
+
+    if remaining:
+        logs.append(f"    ⚠ {len(remaining)} request(s) could not be assigned to any truck (insufficient fleet capacity):")
+        for r in remaining:
+            logs.append(f"        - {r['warehouse_name']} → {r['destination_name']} ({r['weight']:.0f} kg, {r.get('volume', 0):.2f} m³)")
 
 
 # ---------------------------------------------------------------------------
@@ -521,7 +677,7 @@ def generate_transportation_plan(db: Client, company_id: str, date_iso: str) -> 
             duration_matrix = _get_duration_matrix_osrm(locations)
             logs.append(f"\n  Route assignments:")
 
-            for vehicle_idx, route_nodes in enumerate(solution):
+            for vehicle_idx, route_nodes in solution:
                 truck_doc = trucks[vehicle_idx]
                 truck_id = truck_doc.id
                 truck_data = truck_doc.to_dict()
@@ -669,41 +825,14 @@ def generate_transportation_plan(db: Client, company_id: str, date_iso: str) -> 
             logs.append("  ⚠ Solver failed, falling back to naive assignment")
             no_geo_requests.extend(geo_requests)
 
-    # --- Fallback for no-geo requests ---
+    # --- Fallback: no-geo requests, or requests the PDP solver couldn't route ---
     if no_geo_requests:
-        logs.append(f"\n  Fallback: {len(no_geo_requests)} requests without coordinates")
+        logs.append(f"\n  Fallback: {len(no_geo_requests)} request(s) need naive assignment")
         remaining_trucks = [t for t in trucks if t.id not in truck_assignments]
-        if remaining_trucks:
-            truck_doc = remaining_trucks[0]
-            route_ref = db.collection("routes").document()
-            route_ref.set({
-                "transportation_plan_id": plan_ref.id,
-                "truck_id": truck_doc.id,
-                "route_date": date_iso,
-                "status": "planned",
-                "total_distance_km": None,
-                "space_utilization_percent": None,
-                "weight_utilization_percent": None,
-                "generated_at": datetime.now(timezone.utc),
-            })
-            created_route_ids.append(route_ref.id)
-            seq = 1
-            for req in no_geo_requests:
-                db.collection("route_stops").document().set({
-                    "route_id": route_ref.id,
-                    "pickup_request_id": req["doc_id"],
-                    "stop_sequence": seq,
-                    "stop_type": "pickup",
-                    "lat": req.get("pickup_lat"),
-                    "lng": req.get("pickup_lng"),
-                    "eta": None,
-                    "allocated_weight_kg": req["weight"],
-                    "allocated_volume_m3": None,
-                    "status": "pending",
-                })
-                seq += 1
-                db.collection("pickup_requests").document(req["doc_id"]).update({"status": "optimized"})
-            db.collection("trucks").document(truck_doc.id).update({"status": "on_trip"})
+        _assign_fallback_requests(
+            db, plan_ref, date_iso, no_geo_requests, remaining_trucks,
+            truck_assignments, created_route_ids, logs,
+        )
 
     # --- Fuel analysis ---
     naive_distance = sum(
@@ -720,7 +849,7 @@ def generate_transportation_plan(db: Client, company_id: str, date_iso: str) -> 
     logs.append(f"  → Distance saved: {naive_distance - total_distance_km:.2f} km ({fuel_savings:.1f}%)")
     logs.append(f"  → Estimated fuel: {estimated_fuel:.2f} L")
 
-    trucks_used = len(truck_assignments) + (1 if no_geo_requests else 0)
+    trucks_used = len(truck_assignments)
     total_reqs = len(geo_requests) + len(no_geo_requests)
 
     logs.append(f"\n[4/4] ✓ Optimization complete")
