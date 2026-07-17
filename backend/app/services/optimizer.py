@@ -654,6 +654,8 @@ def generate_transportation_plan(db: Client, company_id: str, date_iso: str) -> 
 
         distance_matrix = _build_distance_matrix(locations)
         vehicle_capacities = [int(t.to_dict()["capacity_weight_kg"]) for t in trucks]
+        logs.append(f"    Vehicle weight capacities: {vehicle_capacities}")
+        logs.append(f"    Demand values (weight): {demands[:5]}... (depot + first 2 pairs)")
 
         # Volume capacities: L×W×H in liters (×1000 for int), fallback to large number
         vehicle_volume_capacities = []
@@ -743,9 +745,39 @@ def generate_transportation_plan(db: Client, company_id: str, date_iso: str) -> 
                 space_result = _run_space_optimization(
                     db, truck_id, list(truck_request_ids), dropoff_seq, dropoff_names
                 )
-                logs.append(f"      Space: {space_result.weight_utilization_percent}% weight | {space_result.space_utilization_percent}% volume")
 
-                # Create route document
+                # Calculate peak load (accounts for backhauling/interleaving)
+                peak_weight = 0.0
+                peak_volume = 0.0
+                cur_w = 0.0
+                cur_v = 0.0
+                for node in route_nodes:
+                    info = node_info.get(node)
+                    if not info:
+                        continue
+                    req = geo_requests[info["idx"]]
+                    if info["type"] == "pickup":
+                        cur_w += req["weight"]
+                        cur_v += req.get("volume", 0)
+                    elif info["type"] == "dropoff":
+                        cur_w -= req["weight"]
+                        cur_v -= req.get("volume", 0)
+                    peak_weight = max(peak_weight, cur_w)
+                    peak_volume = max(peak_volume, cur_v)
+
+                cap_weight = truck_data["capacity_weight_kg"]
+                t_l = truck_data.get("length_cm") or 0
+                t_w = truck_data.get("width_cm") or 0
+                t_h = truck_data.get("height_cm") or 0
+                cap_vol_m3 = (t_l * t_w * t_h) / 1_000_000 if t_l > 0 and t_w > 0 and t_h > 0 else 30
+                peak_weight_util = round(peak_weight / cap_weight * 100, 1) if cap_weight > 0 else 0
+                peak_space_util = round(peak_volume / cap_vol_m3 * 100, 1) if cap_vol_m3 > 0 else 0
+
+                logs.append(f"      Peak load: {peak_weight:.0f}/{cap_weight:.0f} kg ({peak_weight_util}%)")
+                if peak_weight < sum(r["weight"] for r in truck_reqs):
+                    logs.append(f"      ℹ Truck uses backhauling (delivers before picking up more)")
+
+                # Create route document — use peak-based utilization
                 route_ref = db.collection("routes").document()
                 route_ref.set({
                     "transportation_plan_id": plan_ref.id,
@@ -753,8 +785,8 @@ def generate_transportation_plan(db: Client, company_id: str, date_iso: str) -> 
                     "route_date": date_iso,
                     "status": "planned",
                     "total_distance_km": round(route_dist_km, 2),
-                    "space_utilization_percent": space_result.space_utilization_percent,
-                    "weight_utilization_percent": space_result.weight_utilization_percent,
+                    "space_utilization_percent": peak_space_util,
+                    "weight_utilization_percent": peak_weight_util,
                     "generated_at": datetime.now(timezone.utc),
                 })
                 created_route_ids.append(route_ref.id)

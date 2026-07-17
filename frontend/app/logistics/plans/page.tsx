@@ -188,7 +188,7 @@ function PlansContent() {
               <CardContent className="p-4 flex flex-col items-center justify-center text-center h-full text-emerald-700 dark:text-emerald-400">
                 <CheckCircle className="h-5 w-5 mb-2" />
                 <p className="text-2xl font-bold">{plan.fuel_savings_percent ? `${plan.fuel_savings_percent}%` : "—"}</p>
-                <p className="text-xs font-semibold uppercase tracking-wider mt-1">Distance Saved</p>
+                <p className="text-xs font-semibold uppercase tracking-wider mt-1">Fuel Cost Saved</p>
               </CardContent>
             </Card>
           </div>

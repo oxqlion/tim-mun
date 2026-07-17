@@ -117,7 +117,7 @@ function RequestsList() {
                 <TableRow className="bg-muted/30 hover:bg-muted/30">
                   <TableHead className="font-semibold"><div className="flex items-center gap-2"><MapPin className="h-4 w-4 text-muted-foreground" /> Destination</div></TableHead>
                   <TableHead className="font-semibold"><div className="flex items-center gap-2"><Calendar className="h-4 w-4 text-muted-foreground" /> Pickup Date</div></TableHead>
-                  <TableHead className="font-semibold"><div className="flex items-center gap-2"><Clock className="h-4 w-4 text-muted-foreground" /> Arrive By</div></TableHead>
+                  <TableHead className="font-semibold"><div className="flex items-center gap-2"><Clock className="h-4 w-4 text-muted-foreground" /> Must Arrive Before</div></TableHead>
                   <TableHead className="font-semibold"><div className="flex items-center gap-2"><Package className="h-4 w-4 text-muted-foreground" /> Items</div></TableHead>
                   <TableHead className="font-semibold"><div className="flex items-center gap-2"><Clock className="h-4 w-4 text-muted-foreground" /> Live ETA</div></TableHead>
                   <TableHead className="font-semibold">Status</TableHead>

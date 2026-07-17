@@ -73,7 +73,8 @@ def seed():
     trucks_data = [
         {"vehicle_type": "truck_medium", "plate_number": "B 1234 XYZ", "capacity_weight_kg": 5000, "length_cm": 400, "width_cm": 200, "height_cm": 200},
         {"vehicle_type": "truck_large", "plate_number": "B 5678 ABC", "capacity_weight_kg": 10000, "length_cm": 600, "width_cm": 240, "height_cm": 240},
-        {"vehicle_type": "truck_small", "plate_number": "B 9012 DEF", "capacity_weight_kg": 2500, "length_cm": 300, "width_cm": 180, "height_cm": 180},
+        {"vehicle_type": "truck_small", "plate_number": "B 9012 DEF", "capacity_weight_kg": 3000, "length_cm": 350, "width_cm": 200, "height_cm": 200},
+        {"vehicle_type": "truck_medium", "plate_number": "D 3456 GHI", "capacity_weight_kg": 5000, "length_cm": 400, "width_cm": 200, "height_cm": 200},
     ]
 
     for t in trucks_data:
@@ -96,8 +97,9 @@ def seed():
 
     # NOTE: Dimensions are per CONTAINER/PALLET, not per individual item.
     # quantity = number of containers/pallets, each with the given dimensions.
+    # Total weight ~18,500 kg → forces multi-truck allocation (max single truck = 10t)
     requests_data = [
-        # Warehouse 1 (Bandung) → Jakarta Barat
+        # Warehouse 1 (Bandung) → Jakarta Barat — HEAVY (3750 kg)
         {
             "warehouse_idx": 0,
             "pickup_date": today,
@@ -111,7 +113,7 @@ def seed():
                 {"commodity_name": "Beras Organik", "unit_type": "sack", "quantity": 3, "estimated_weight_kg": 1250, "length_cm": 120, "width_cm": 100, "height_cm": 60, "stackable": True, "fragile": False},
             ],
         },
-        # Warehouse 2 (Lembang) → Jakarta Selatan
+        # Warehouse 2 (Lembang) → Jakarta Selatan — (1000 kg)
         {
             "warehouse_idx": 1,
             "pickup_date": today,
@@ -126,7 +128,7 @@ def seed():
                 {"commodity_name": "Brokoli", "unit_type": "kg", "quantity": 1, "estimated_weight_kg": 200, "length_cm": 100, "width_cm": 80, "height_cm": 50, "stackable": False, "fragile": True},
             ],
         },
-        # Warehouse 3 (Subang) → Jakarta Timur
+        # Warehouse 3 (Subang) → Jakarta Timur — (1400 kg)
         {
             "warehouse_idx": 2,
             "pickup_date": today,
@@ -140,7 +142,7 @@ def seed():
                 {"commodity_name": "Mangga Harum Manis", "unit_type": "pallet", "quantity": 2, "estimated_weight_kg": 600, "length_cm": 120, "width_cm": 100, "height_cm": 60, "stackable": False, "fragile": True},
             ],
         },
-        # Warehouse 4 (Garut) → Jakarta Barat (same direction as warehouse 1!)
+        # Warehouse 4 (Garut) → Jakarta Barat — (350 kg)
         {
             "warehouse_idx": 3,
             "pickup_date": today,
@@ -154,7 +156,7 @@ def seed():
                 {"commodity_name": "Kunyit", "unit_type": "sack", "quantity": 1, "estimated_weight_kg": 150, "length_cm": 100, "width_cm": 80, "height_cm": 50, "stackable": True, "fragile": False},
             ],
         },
-        # Warehouse 1 (Bandung) → Bekasi
+        # Warehouse 1 (Bandung) → Bekasi — HEAVY (4000 kg)
         {
             "warehouse_idx": 0,
             "pickup_date": today,
@@ -165,9 +167,10 @@ def seed():
             "notes": None,
             "items": [
                 {"commodity_name": "Tepung Beras", "unit_type": "sack", "quantity": 4, "estimated_weight_kg": 2000, "length_cm": 120, "width_cm": 100, "height_cm": 80, "stackable": True, "fragile": False},
+                {"commodity_name": "Gula Pasir", "unit_type": "sack", "quantity": 4, "estimated_weight_kg": 2000, "length_cm": 120, "width_cm": 100, "height_cm": 80, "stackable": True, "fragile": False},
             ],
         },
-        # Warehouse 2 (Lembang) → Bekasi (same direction as above!)
+        # Warehouse 2 (Lembang) → Bekasi — (400 kg)
         {
             "warehouse_idx": 1,
             "pickup_date": today,
@@ -178,6 +181,48 @@ def seed():
             "notes": "Kentang, jangan ditumpuk",
             "items": [
                 {"commodity_name": "Kentang", "unit_type": "pallet", "quantity": 1, "estimated_weight_kg": 400, "length_cm": 120, "width_cm": 100, "height_cm": 80, "stackable": False, "fragile": False},
+            ],
+        },
+        # NEW: Warehouse 3 (Subang) → Tangerang — HEAVY (3500 kg)
+        {
+            "warehouse_idx": 2,
+            "pickup_date": today,
+            "required_arrival_date": tomorrow,
+            "destination_name": "Pasar Anyar Tangerang",
+            "destination_lat": -6.1783,
+            "destination_lng": 106.6319,
+            "notes": "Buah-buahan besar, perlu truck luas",
+            "items": [
+                {"commodity_name": "Semangka", "unit_type": "pallet", "quantity": 5, "estimated_weight_kg": 2000, "length_cm": 120, "width_cm": 100, "height_cm": 80, "stackable": True, "fragile": False},
+                {"commodity_name": "Melon", "unit_type": "pallet", "quantity": 3, "estimated_weight_kg": 1500, "length_cm": 120, "width_cm": 100, "height_cm": 80, "stackable": False, "fragile": True},
+            ],
+        },
+        # NEW: Warehouse 4 (Garut) → Bogor — (2100 kg)
+        {
+            "warehouse_idx": 3,
+            "pickup_date": today,
+            "required_arrival_date": tomorrow,
+            "destination_name": "Pasar Bogor",
+            "destination_lat": -6.5971,
+            "destination_lng": 106.8060,
+            "notes": "Rempah untuk pabrik olahan",
+            "items": [
+                {"commodity_name": "Lengkuas", "unit_type": "sack", "quantity": 3, "estimated_weight_kg": 900, "length_cm": 100, "width_cm": 80, "height_cm": 60, "stackable": True, "fragile": False},
+                {"commodity_name": "Sereh", "unit_type": "sack", "quantity": 2, "estimated_weight_kg": 600, "length_cm": 120, "width_cm": 80, "height_cm": 60, "stackable": True, "fragile": False},
+                {"commodity_name": "Daun Salam", "unit_type": "sack", "quantity": 2, "estimated_weight_kg": 600, "length_cm": 100, "width_cm": 80, "height_cm": 50, "stackable": False, "fragile": True},
+            ],
+        },
+        # NEW: Warehouse 1 (Bandung) → Depok — (2000 kg)
+        {
+            "warehouse_idx": 0,
+            "pickup_date": today,
+            "required_arrival_date": day_after,
+            "destination_name": "Pasar Depok",
+            "destination_lat": -6.3923,
+            "destination_lng": 106.8236,
+            "notes": None,
+            "items": [
+                {"commodity_name": "Kacang Kedelai", "unit_type": "sack", "quantity": 4, "estimated_weight_kg": 2000, "length_cm": 120, "width_cm": 100, "height_cm": 80, "stackable": True, "fragile": False},
             ],
         },
     ]

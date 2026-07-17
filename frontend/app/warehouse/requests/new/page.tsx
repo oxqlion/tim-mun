@@ -97,7 +97,7 @@ function NewRequestForm() {
               <Input required type="date" value={pickupDate} onChange={(e) => setPickupDate(e.target.value)} className="bg-background shadow-sm" />
             </div>
             <div className="space-y-2">
-              <Label>Required Arrival Date <span className="text-destructive">*</span></Label>
+              <Label>Must Arrive Before <span className="text-destructive">*</span></Label>
               <Input required type="date" value={requiredArrivalDate} onChange={(e) => setRequiredArrivalDate(e.target.value)} className="bg-background shadow-sm" />
             </div>
           </div>
