@@ -103,7 +103,7 @@ function RequestsContent() {
             <Label className="text-muted-foreground flex items-center gap-2">
               <ListFilter className="w-4 h-4" /> Filter by Status
             </Label>
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v ?? "all")}>
               <SelectTrigger className="w-full sm:w-48 bg-background shadow-sm h-10">
                 <SelectValue />
               </SelectTrigger>
