@@ -39,6 +39,9 @@ class SpaceAllocationOut(BaseModel):
     position_notes: Optional[str] = None
     weight_kg: float
     volume_m3: float
+    quantity: float = 1
+    dropoff_order: Optional[int] = None
+    dropoff_location_name: Optional[str] = None
 
 
 class RouteOut(BaseModel):

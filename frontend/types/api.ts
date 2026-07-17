@@ -82,6 +82,9 @@ export interface SpaceAllocationOut {
   position_notes: string | null;
   weight_kg: number;
   volume_m3: number;
+  quantity: number;
+  dropoff_order: number | null;
+  dropoff_location_name: string | null;
 }
 
 export interface RouteOut {

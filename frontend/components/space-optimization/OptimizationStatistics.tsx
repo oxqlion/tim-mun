@@ -36,8 +36,8 @@ export default function OptimizationStatistics({
   truckVolumeM3,
 }: StatsProps) {
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-      <Card>
+    <div className="flex gap-3 overflow-x-auto pb-2">
+      <Card className="w-40 shrink-0">
         <CardContent className="p-3">
           <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
             <Box className="h-3 w-3" /> Space
@@ -47,7 +47,7 @@ export default function OptimizationStatistics({
         </CardContent>
       </Card>
 
-      <Card>
+      <Card className="w-40 shrink-0">
         <CardContent className="p-3">
           <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
             <Weight className="h-3 w-3" /> Weight
@@ -57,7 +57,7 @@ export default function OptimizationStatistics({
         </CardContent>
       </Card>
 
-      <Card>
+      <Card className="w-40 shrink-0">
         <CardContent className="p-3">
           <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
             <Weight className="h-3 w-3" /> Remaining Weight
@@ -67,7 +67,7 @@ export default function OptimizationStatistics({
         </CardContent>
       </Card>
 
-      <Card>
+      <Card className="w-40 shrink-0">
         <CardContent className="p-3">
           <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
             <Box className="h-3 w-3" /> Remaining Volume
@@ -77,7 +77,7 @@ export default function OptimizationStatistics({
         </CardContent>
       </Card>
 
-      <Card>
+      <Card className="w-40 shrink-0">
         <CardContent className="p-3">
           <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
             <Package className="h-3 w-3" /> Loaded
@@ -87,7 +87,7 @@ export default function OptimizationStatistics({
         </CardContent>
       </Card>
 
-      <Card>
+      <Card className="w-40 shrink-0">
         <CardContent className="p-3">
           <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
             <PackageOpen className="h-3 w-3" /> Unloaded

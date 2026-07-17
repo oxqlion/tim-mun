@@ -1,11 +1,13 @@
 "use client";
 
 import { lazy, Suspense } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Box } from "lucide-react";
+import { Card, CardContent } from "@/components/ui/card";
+import { Box, X } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import TruckInfoCard from "./TruckInfoCard";
 import OptimizationStatistics from "./OptimizationStatistics";
 import LoadingSequence from "./LoadingSequence";
+import { computeTruckStateAtStop } from "@/lib/loadingState";
 import type { RouteOut, TruckOut } from "@/types/api";
 
 const TruckVisualization = lazy(() => import("./TruckVisualization"));
@@ -13,9 +15,16 @@ const TruckVisualization = lazy(() => import("./TruckVisualization"));
 interface SpaceOptimizationSectionProps {
   route: RouteOut;
   truck?: TruckOut;
+  selectedStopSequence?: number | null;
+  onClearSelection?: () => void;
 }
 
-export default function SpaceOptimizationSection({ route, truck }: SpaceOptimizationSectionProps) {
+export default function SpaceOptimizationSection({
+  route,
+  truck,
+  selectedStopSequence = null,
+  onClearSelection,
+}: SpaceOptimizationSectionProps) {
   const allocations = route.space_allocations ?? [];
 
   if (allocations.length === 0) {
@@ -42,6 +51,11 @@ export default function SpaceOptimizationSection({ route, truck }: SpaceOptimiza
   const spaceUtil = route.space_utilization_percent ?? (totalVolume / truckVolumeM3 * 100);
   const weightUtil = route.weight_utilization_percent ?? (totalWeight / truckCapacityKg * 100);
 
+  const { visibleIds, highlightedIds } = computeTruckStateAtStop(allocations, route.stops, selectedStopSequence);
+  const selectedStop = selectedStopSequence != null
+    ? route.stops.find((s) => s.stop_sequence === selectedStopSequence)
+    : undefined;
+
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2">
@@ -54,9 +68,29 @@ export default function SpaceOptimizationSection({ route, truck }: SpaceOptimiza
 
       {/* 3D Visualization */}
       {truckDimensions && (
-        <Suspense fallback={<div className="h-80 animate-pulse rounded-lg border bg-muted" />}>
-          <TruckVisualization truckDimensions={truckDimensions} allocations={allocations} />
-        </Suspense>
+        <div className="space-y-2">
+          {selectedStopSequence != null && (
+            <div className="flex items-center justify-between gap-2 rounded-md border bg-muted/40 px-3 py-1.5 text-xs">
+              <span>
+                Showing truck load at Stop {selectedStopSequence}
+                {selectedStop?.location_name ? `: ${selectedStop.location_name}` : ""}
+              </span>
+              {onClearSelection && (
+                <Button variant="ghost" size="sm" className="h-6 gap-1 px-2 text-xs" onClick={onClearSelection}>
+                  <X className="h-3 w-3" /> Show full load
+                </Button>
+              )}
+            </div>
+          )}
+          <Suspense fallback={<div className="h-80 animate-pulse rounded-lg border bg-muted" />}>
+            <TruckVisualization
+              truckDimensions={truckDimensions}
+              allocations={allocations}
+              visibleIds={visibleIds}
+              highlightedIds={highlightedIds}
+            />
+          </Suspense>
+        </div>
       )}
 
       {/* Statistics */}
@@ -72,7 +106,7 @@ export default function SpaceOptimizationSection({ route, truck }: SpaceOptimiza
       />
 
       {/* Loading Sequence */}
-      <LoadingSequence allocations={allocations} />
+      <LoadingSequence allocations={allocations} stops={route.stops} />
     </div>
   );
 }

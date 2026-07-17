@@ -2,7 +2,7 @@
 
 import { useMemo } from "react";
 import { Canvas } from "@react-three/fiber";
-import { OrbitControls, PerspectiveCamera, ContactShadows } from "@react-three/drei";
+import { OrbitControls, PerspectiveCamera, ContactShadows, Html } from "@react-three/drei";
 import * as THREE from "three";
 import type { SpaceAllocationOut } from "@/types/api";
 
@@ -11,9 +11,17 @@ const COLORS = [
   "#ec4899", "#06b6d4", "#84cc16", "#f97316", "#6366f1",
 ];
 
+// Hard cap on per-unit boxes for a single line item so an unusually large
+// quantity (e.g. hundreds of sacks) can't stall the renderer.
+const MAX_UNIT_BOXES_PER_ALLOCATION = 300;
+
 interface TruckVisualizationProps {
   truckDimensions: { length: number; width: number; height: number };
   allocations: SpaceAllocationOut[];
+  /** IDs of allocations currently in the truck; null/undefined = show everything. */
+  visibleIds?: Set<string> | null;
+  /** IDs of allocations to visually emphasize (loaded/delivered at the selected stop). */
+  highlightedIds?: Set<string>;
 }
 
 function TruckContainer({ length, width, height }: { length: number; width: number; height: number }) {
@@ -43,11 +51,17 @@ function TruckContainer({ length, width, height }: { length: number; width: numb
         <boxGeometry args={[0.4, height, width]} />
         <meshStandardMaterial color="#94a3b8" opacity={0.08} transparent />
       </mesh>
-      {/* Right wall */}
+      {/* Right wall — the rear door end (x = length): cargo for the earliest */}
+      {/* delivery stop is loaded last and ends up nearest this face. */}
       <mesh position={[length / 2 - 0.2, 0, 0]}>
         <boxGeometry args={[0.4, height, width]} />
-        <meshStandardMaterial color="#94a3b8" opacity={0.08} transparent />
+        <meshStandardMaterial color="#f59e0b" opacity={0.12} transparent />
       </mesh>
+      <Html position={[length / 2 + 0.6, 0, 0]} center distanceFactor={12}>
+        <div className="pointer-events-none whitespace-nowrap rounded bg-amber-500 px-2 py-0.5 text-[10px] font-semibold text-white shadow">
+          ▸ REAR DOOR
+        </div>
+      </Html>
     </group>
   );
 }
@@ -56,10 +70,14 @@ function CargoBox({
   position,
   size,
   color,
+  dimmed = false,
+  highlighted = false,
 }: {
   position: [number, number, number];
   size: [number, number, number];
   color: string;
+  dimmed?: boolean;
+  highlighted?: boolean;
 }) {
   const edges = useMemo(() => {
     const geo = new THREE.BoxGeometry(...size);
@@ -70,73 +88,137 @@ function CargoBox({
     <group position={position}>
       <mesh castShadow receiveShadow>
         <boxGeometry args={size} />
-        <meshStandardMaterial color={color} metalness={0.05} roughness={0.6} opacity={0.92} transparent />
+        <meshStandardMaterial
+          color={color}
+          metalness={0.05}
+          roughness={0.6}
+          opacity={dimmed ? 0.2 : 0.92}
+          transparent
+          emissive={highlighted ? color : "#000000"}
+          emissiveIntensity={highlighted ? 0.6 : 0}
+        />
       </mesh>
       <lineSegments geometry={edges}>
-        <lineBasicMaterial color="#0f172a" opacity={0.4} transparent />
+        <lineBasicMaterial
+          color={highlighted ? "#ffffff" : "#0f172a"}
+          opacity={dimmed ? 0.15 : highlighted ? 0.9 : 0.4}
+          linewidth={highlighted ? 2 : 1}
+          transparent
+        />
       </lineSegments>
     </group>
   );
 }
 
-function Scene({ truckDimensions, allocations }: TruckVisualizationProps) {
+// Colors are assigned from the full allocation list (not the filtered/visible
+// one) so a commodity keeps the same color no matter which stop is selected.
+function useColorByAllocId(allocations: SpaceAllocationOut[]) {
+  return useMemo(() => {
+    const sorted = [...allocations].sort((a, b) => a.loading_sequence - b.loading_sequence);
+    const map = new Map<string, string>();
+    sorted.forEach((alloc, i) => map.set(alloc.id, COLORS[i % COLORS.length]));
+    return map;
+  }, [allocations]);
+}
+
+function Scene({ truckDimensions, allocations, visibleIds, highlightedIds }: TruckVisualizationProps) {
   const { length, width, height } = truckDimensions;
   const maxDim = Math.max(length, width, height);
   const scale = 8 / maxDim;
+  const colorByAllocId = useColorByAllocId(allocations);
 
+  // Only the currently visible (in-truck) allocations are packed. Packing a
+  // filtered subset — rather than hiding boxes out of a layout computed for
+  // everything — keeps the load tightly stacked with no gaps, so cargo never
+  // renders floating in mid-air once earlier/later items are hidden.
   const boxes = useMemo(() => {
-    const result: { pos: [number, number, number]; size: [number, number, number]; color: string }[] = [];
+    const result: { pos: [number, number, number]; size: [number, number, number]; color: string; allocId: string }[] = [];
     let curX = 3;
     let curZ = 3;
     let curY = 1;
     let rowMaxH = 0;
     let rowMaxW = 0;
 
-    allocations.forEach((alloc, idx) => {
-      const volCm3 = alloc.volume_m3 * 1_000_000;
-      const side = Math.cbrt(volCm3);
+    // Fill in loading order (deepest-loaded first): boxes are placed starting
+    // at low x (far from the door) and advance toward x = length (the rear
+    // door) as more are added. Since cargo for the earliest delivery stop is
+    // loaded last (see space_optimizer.py), it naturally lands near the door.
+    const visible = visibleIds ? allocations.filter((a) => visibleIds.has(a.id)) : allocations;
+    const loadingOrder = [...visible].sort((a, b) => a.loading_sequence - b.loading_sequence);
+
+    loadingOrder.forEach((alloc) => {
+      const qty = Math.min(
+        Math.max(1, Math.round(alloc.quantity || 1)),
+        MAX_UNIT_BOXES_PER_ALLOCATION
+      );
+      const unitVolCm3 = (alloc.volume_m3 / qty) * 1_000_000;
+      const side = Math.cbrt(unitVolCm3);
       const bL = Math.min(side * 1.4, length * 0.3);
       const bW = Math.min(side * 1.0, width * 0.4);
       const bH = Math.min(side * 0.7, height * 0.3);
+      const color = colorByAllocId.get(alloc.id) ?? COLORS[0];
 
-      if (curX + bL > length - 3) {
-        curX = 3;
-        curZ += rowMaxW + 4;
-        rowMaxW = 0;
+      for (let unit = 0; unit < qty; unit++) {
+        if (curX + bL > length - 3) {
+          curX = 3;
+          curZ += rowMaxW + 4;
+          rowMaxW = 0;
+        }
+        if (curZ + bW > width - 3) {
+          curZ = 3;
+          curX = 3;
+          curY += rowMaxH + 2;
+          rowMaxH = 0;
+        }
+
+        result.push({
+          pos: [curX + bL / 2, curY + bH / 2, curZ + bW / 2],
+          size: [bL, bH, bW],
+          color,
+          allocId: alloc.id,
+        });
+
+        curX += bL + 4;
+        rowMaxH = Math.max(rowMaxH, bH);
+        rowMaxW = Math.max(rowMaxW, bW);
       }
-      if (curZ + bW > width - 3) {
-        curZ = 3;
-        curX = 3;
-        curY += rowMaxH + 2;
-        rowMaxH = 0;
-      }
-
-      result.push({
-        pos: [curX + bL / 2, curY + bH / 2, curZ + bW / 2],
-        size: [bL, bH, bW],
-        color: COLORS[idx % COLORS.length],
-      });
-
-      curX += bL + 4;
-      rowMaxH = Math.max(rowMaxH, bH);
-      rowMaxW = Math.max(rowMaxW, bW);
     });
 
     return result;
-  }, [allocations, length, width, height]);
+  }, [allocations, visibleIds, colorByAllocId, length, width, height]);
+
+  const hasHighlights = !!highlightedIds && highlightedIds.size > 0;
 
   return (
     <group scale={[scale, scale, scale]}>
       <TruckContainer length={length} width={width} height={height} />
       {boxes.map((box, i) => (
-        <CargoBox key={i} position={box.pos} size={box.size} color={box.color} />
+        <CargoBox
+          key={i}
+          position={box.pos}
+          size={box.size}
+          color={box.color}
+          dimmed={hasHighlights && !highlightedIds!.has(box.allocId)}
+          highlighted={hasHighlights && highlightedIds!.has(box.allocId)}
+        />
       ))}
     </group>
   );
 }
 
-export default function TruckVisualization({ truckDimensions, allocations }: TruckVisualizationProps) {
+export default function TruckVisualization({ truckDimensions, allocations, visibleIds, highlightedIds }: TruckVisualizationProps) {
   const camDist = 14;
+
+  const legendItems = useMemo(() => {
+    return [...allocations]
+      .sort((a, b) => a.loading_sequence - b.loading_sequence)
+      .slice(0, 8)
+      .map((alloc, i) => ({
+        id: alloc.id,
+        label: alloc.commodity_name.split(" (")[0],
+        color: COLORS[i % COLORS.length],
+      }));
+  }, [allocations]);
 
   return (
     <div className="relative h-[420px] w-full overflow-hidden rounded-xl border bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
@@ -163,15 +245,20 @@ export default function TruckVisualization({ truckDimensions, allocations }: Tru
         {/* Ground shadow */}
         <ContactShadows position={[0, -0.5, 0]} opacity={0.3} scale={20} blur={2} />
 
-        <Scene truckDimensions={truckDimensions} allocations={allocations} />
+        <Scene
+          truckDimensions={truckDimensions}
+          allocations={allocations}
+          visibleIds={visibleIds}
+          highlightedIds={highlightedIds}
+        />
       </Canvas>
 
       {/* Legend */}
       <div className="absolute bottom-3 left-3 flex flex-wrap gap-1.5">
-        {allocations.slice(0, 8).map((alloc, i) => (
-          <span key={i} className="flex items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-1 text-[11px] text-white/90 backdrop-blur-sm">
-            <span className="inline-block h-2.5 w-2.5 rounded-full shadow-sm" style={{ background: COLORS[i % COLORS.length] }} />
-            {alloc.commodity_name.split(" (")[0]}
+        {legendItems.map(({ id, label, color }) => (
+          <span key={id} className="flex items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-1 text-[11px] text-white/90 backdrop-blur-sm">
+            <span className="inline-block h-2.5 w-2.5 rounded-full shadow-sm" style={{ background: color }} />
+            {label}
           </span>
         ))}
       </div>
